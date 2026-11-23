@@ -4,7 +4,7 @@ import sys
 
 root = Path(sys.argv[1])
 gradle = root / "build.gradle"
-main = root / "app/src/main"
+main = root / "src/main"
 java = main / "java/ru/mos2/app/MainActivity.java"
 manifest = main / "AndroidManifest.xml"
 strings = main / "res/values/strings.xml"
