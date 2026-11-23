@@ -185,7 +185,10 @@ manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/r
 </manifest>
 ''', encoding="utf-8")
 strings.parent.mkdir(parents=True, exist_ok=True)
-strings.write_text('<resources>\\n    <string name="app_name">Процветание</string>\\n</resources>\\n', encoding="utf-8")
+strings.write_text("""<resources>
+    <string name="app_name">Процветание</string>
+</resources>
+""", encoding="utf-8")
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     g = g.replace('versionCode 3', 'versionCode 4').replace('versionName "2.0.0"', 'versionName "3.0.0"')
