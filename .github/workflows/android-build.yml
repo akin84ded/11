@@ -6,6 +6,7 @@ on:
     paths:
       - 'MOS2_Android_2.0_SOURCE.zip'
       - 'AndroidManifest.xml'
+      - '.github/scripts/**'
       - '.github/workflows/android-build.yml'
 
 permissions:
@@ -74,6 +75,13 @@ jobs:
               p.write_text(s, encoding="utf-8")
           print(f"Verified AndroidX Core dependency in {p}")
           PY
+
+      - name: Apply standalone Prosperity Android app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_DIR="$(dirname "$(find source -type f -path '*/app/build.gradle' -print -quit)")"
+          python3 .github/scripts/patch_prosperity.py "$APP_DIR"
 
       - name: Build debug APK when a Gradle project is present
         shell: bash
