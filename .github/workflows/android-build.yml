@@ -36,6 +36,30 @@ jobs:
           echo "Gradle project markers:"
           find source -type f \( -name gradlew -o -name settings.gradle -o -name settings.gradle.kts -o -name build.gradle -o -name build.gradle.kts \) -print | tee gradle-markers.txt
 
+      - name: Repair Android build configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROPS="$(find source -type f -name gradle.properties -path '*/android/gradle.properties' -print -quit)"
+          if [[ -z "$PROPS" ]]; then
+            echo "Android Gradle properties file was not found" >&2
+            exit 1
+          fi
+          grep -q '^android.useAndroidX=true$' "$PROPS" || echo 'android.useAndroidX=true' >> "$PROPS"
+          grep -q '^android.enableJetifier=true$' "$PROPS" || echo 'android.enableJetifier=true' >> "$PROPS"
+          # Repair an accidentally stored literal backslash-n in XML manifests.
+          while IFS= read -r -d '' manifest; do
+            python3 - "$manifest" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
+          s = s.replace(r"\n", "\n")
+          p.write_text(s, encoding="utf-8")
+          PY
+          done < <(find source -type f -name AndroidManifest.xml -print0)
+          echo "Updated $PROPS:"
+          cat "$PROPS"
+
       - name: Build debug APK when a Gradle project is present
         shell: bash
         run: |
@@ -54,7 +78,7 @@ jobs:
             gradle --no-daemon assembleDebug
           else
             echo "No Gradle project was found in the uploaded source archive." | tee ../build-status.txt
-            exit 0
+            exit 1
           fi
 
       - name: Collect APK and diagnostics
@@ -64,7 +88,11 @@ jobs:
           mkdir -p output
           find source -type f -name '*.apk' -exec cp --parents '{}' output/ \; || true
           cp source-files.txt gradle-markers.txt output/ 2>/dev/null || true
-          printf 'Workflow result: inspect the job log for build details.\n' > output/BUILD-STATUS.txt
+          if find output -type f -name '*.apk' | grep -q .; then
+            echo 'APK build output found.' > output/BUILD-STATUS.txt
+          else
+            echo 'No APK produced. See the workflow log for the failure.' > output/BUILD-STATUS.txt
+          fi
 
       - name: Upload APK or source diagnostics
         if: always()
