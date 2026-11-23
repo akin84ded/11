@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
+gradle = root / "build.gradle"
 main = root / "app/src/main"
 java = main / "java/ru/mos2/app/MainActivity.java"
 manifest = main / "AndroidManifest.xml"
@@ -185,4 +186,8 @@ manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/r
 ''', encoding="utf-8")
 strings.parent.mkdir(parents=True, exist_ok=True)
 strings.write_text('<resources>\\n    <string name="app_name">Процветание</string>\\n</resources>\\n', encoding="utf-8")
+if gradle.exists():
+    g = gradle.read_text(encoding="utf-8")
+    g = g.replace('versionCode 3', 'versionCode 4').replace('versionName "2.0.0"', 'versionName "3.0.0"')
+    gradle.write_text(g, encoding="utf-8")
 print("Patched standalone Prosperity Android app")
