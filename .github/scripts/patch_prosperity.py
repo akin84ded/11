@@ -92,17 +92,37 @@ public class MainActivity extends Activity {
         io.execute(() -> {
             HttpURLConnection c = null;
             try {
-                URL url = new URL("https://iss.moex.com/iss/engines/stock/markets/shares/securities.json?iss.meta=off&iss.only=securities,marketdata&securities.columns=SECID,SHORTNAME&marketdata.columns=SECID,LAST,CHANGE&limit=1000");
-                c = (HttpURLConnection)url.openConnection(); c.setConnectTimeout(15000); c.setReadTimeout(20000);
-                c.setRequestProperty("User-Agent","Prosperity-Android/1.0"); c.setRequestProperty("Accept","application/json");
-                if (c.getResponseCode()!=200) throw new IOException("HTTP "+c.getResponseCode());
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                try(InputStream in=c.getInputStream()) { byte[] b=new byte[8192]; int n; while((n=in.read(b))!=-1) out.write(b,0,n); }
-                JSONObject data = new JSONObject(new String(out.toByteArray(), StandardCharsets.UTF_8));
-                prefs.edit().putString(CACHE,data.toString()).putLong("updated",System.currentTimeMillis()).apply();
-                runOnUiThread(() -> { parseQuotes(data); render(search.getText().toString()); status.setText("Котировки MOEX обновлены: "+stocks.size()+" инструментов. Кэш сохранён на устройстве."); });
+                String endpoint = "/iss/engines/stock/markets/shares/securities.json?iss.meta=off&iss.only=securities,marketdata&securities.columns=SECID,SHORTNAME&marketdata.columns=SECID,LAST,CHANGE&limit=1000";
+                JSONObject data = null;
+                Exception lastError = null;
+                // Сначала пробуем HTTP/80: в некоторых сетях исходящий HTTPS/443 заблокирован.
+                // Если HTTP не работает, пробуем обычный HTTPS/443.
+                for (String scheme : new String[]{"http", "https"}) {
+                    try {
+                        URL url = new URL(scheme + "://iss.moex.com" + endpoint);
+                        c = (HttpURLConnection)url.openConnection();
+                        c.setConnectTimeout(12000); c.setReadTimeout(18000);
+                        c.setInstanceFollowRedirects(false);
+                        c.setRequestProperty("User-Agent","Prosperity-Android/1.0");
+                        c.setRequestProperty("Accept","application/json");
+                        int code = c.getResponseCode();
+                        if (code != 200) throw new IOException(scheme.toUpperCase(Locale.ROOT)+" HTTP "+code);
+                        ByteArrayOutputStream out = new ByteArrayOutputStream();
+                        try(InputStream in=c.getInputStream()) { byte[] b=new byte[8192]; int n; while((n=in.read(b))!=-1) out.write(b,0,n); }
+                        data = new JSONObject(new String(out.toByteArray(), StandardCharsets.UTF_8));
+                        break;
+                    } catch(Exception attempt) {
+                        lastError = attempt;
+                    } finally {
+                        if(c!=null) { c.disconnect(); c=null; }
+                    }
+                }
+                if (data == null) throw new IOException("HTTP/80 и HTTPS/443 недоступны: "+(lastError==null?"неизвестная ошибка":lastError.getMessage()));
+                final JSONObject result = data;
+                prefs.edit().putString(CACHE,result.toString()).putLong("updated",System.currentTimeMillis()).apply();
+                runOnUiThread(() -> { parseQuotes(result); render(search.getText().toString()); status.setText("Котировки MOEX обновлены: "+stocks.size()+" инструментов. Кэш сохранён на устройстве."); });
             } catch(Exception ex) {
-                runOnUiThread(() -> status.setText("Нет соединения с MOEX. Используются сохранённые данные, если они есть. ("+ex.getMessage()+")"));
+                runOnUiThread(() -> status.setText("Нет соединения с MOEX. Кэш сохранён. Проверены порты 80 и 443. ("+ex.getMessage()+")"));
             } finally { if(c!=null)c.disconnect(); }
         });
     }
@@ -170,7 +190,7 @@ manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/r
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
@@ -191,7 +211,7 @@ strings.write_text("""<resources>
 """, encoding="utf-8")
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
-    g = g.replace('versionCode 3', 'versionCode 4').replace('versionName "2.0.0"', 'versionName "3.0.0"')
+    g = g.replace('versionCode 3', 'versionCode 5').replace('versionName "2.0.0"', 'versionName "3.1.0"')
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 print("Patched standalone Prosperity Android app")
