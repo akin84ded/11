@@ -1,0 +1,75 @@
+name: MOS2 Android source check and APK build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'MOS2_Android_2.0_SOURCE.zip'
+      - 'AndroidManifest.xml'
+      - '.github/workflows/android-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Extract Android source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p source
+          unzip -q MOS2_Android_2.0_SOURCE.zip -d source
+          echo "Files extracted from source archive:"
+          find source -maxdepth 5 -type f -printf '%p (%s bytes)\n' | sort | tee source-files.txt
+          echo
+          echo "Gradle project markers:"
+          find source -type f \( -name gradlew -o -name settings.gradle -o -name settings.gradle.kts -o -name build.gradle -o -name build.gradle.kts \) -print | tee gradle-markers.txt
+
+      - name: Build debug APK when a Gradle project is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          WRAPPER="$(find source -type f -name gradlew -print -quit)"
+          SETTINGS="$(find source -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
+          BUILD_FILE="$(find source -type f \( -name build.gradle -o -name build.gradle.kts \) -print -quit)"
+          if [[ -n "$WRAPPER" ]]; then
+            PROJECT_DIR="$(dirname "$WRAPPER")"
+            chmod +x "$WRAPPER"
+            cd "$PROJECT_DIR"
+            ./gradlew --no-daemon assembleDebug
+          elif [[ -n "$SETTINGS" || -n "$BUILD_FILE" ]]; then
+            if [[ -n "$SETTINGS" ]]; then PROJECT_DIR="$(dirname "$SETTINGS")"; else PROJECT_DIR="$(dirname "$BUILD_FILE")"; fi
+            cd "$PROJECT_DIR"
+            gradle --no-daemon assembleDebug
+          else
+            echo "No Gradle project was found in the uploaded source archive." | tee ../build-status.txt
+            exit 0
+          fi
+
+      - name: Collect APK and diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p output
+          find source -type f -name '*.apk' -exec cp --parents '{}' output/ \; || true
+          cp source-files.txt gradle-markers.txt output/ 2>/dev/null || true
+          printf 'Workflow result: inspect the job log for build details.\n' > output/BUILD-STATUS.txt
+
+      - name: Upload APK or source diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mos2-android-build-output
+          path: output/
+          if-no-files-found: warn
