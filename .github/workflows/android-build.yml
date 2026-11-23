@@ -103,6 +103,9 @@ jobs:
           mkdir -p output
           find source -type f -name '*.apk' -exec cp --parents '{}' output/ \; || true
           cp source-files.txt gradle-markers.txt output/ 2>/dev/null || true
+          # Keep the Android app sources in the diagnostic artifact for safe native refactoring.
+          if [[ -d source/android/app/src/main ]]; then cp -a source/android/app/src/main output/android-main; fi
+          cp source/android/app/build.gradle output/app-build.gradle 2>/dev/null || true
           if find output -type f -name '*.apk' | grep -q .; then
             echo 'APK build output found.' > output/BUILD-STATUS.txt
           else
