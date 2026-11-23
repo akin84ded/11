@@ -192,5 +192,6 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     g = g.replace('versionCode 3', 'versionCode 4').replace('versionName "2.0.0"', 'versionName "3.0.0"')
+    g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 print("Patched standalone Prosperity Android app")
