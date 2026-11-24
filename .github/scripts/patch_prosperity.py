@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private SharedPreferences prefs;
-    private LinearLayout list, root;
+    private LinearLayout list, root, analytics;
     private EditText search;
     private TextView status;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -39,7 +39,8 @@ public class MainActivity extends Activity {
     private static final String CACHE = "quotes_cache";
     private static class Stock {
         String ticker, name, price, change;
-        Stock(String t, String n, String p, String c) { ticker=t; name=n; price=p; change=c; }
+        double changePct;
+        Stock(String t, String n, String p, String c, double pct) { ticker=t; name=n; price=p; change=c; changePct=pct; }
     }
 
     @Override public void onCreate(Bundle state) {
@@ -72,6 +73,9 @@ public class MainActivity extends Activity {
         Button update = new Button(this); update.setText("Обновить котировки из интернета");
         root.addView(update);
         status = text("Котировки загружаются…", 13, false); root.addView(status);
+        root.addView(text("Аналитика рынка", 21, true));
+        analytics = new LinearLayout(this); analytics.setOrientation(LinearLayout.VERTICAL);
+        root.addView(analytics);
         root.addView(text("Мои акции", 20, true));
         list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); root.addView(list);
         find.setOnClickListener(v -> render(search.getText().toString()));
@@ -143,9 +147,12 @@ public class MainActivity extends Activity {
                 String ticker=r.optString(ti,""), name=r.optString(ni,ticker);
                 if(ticker.isEmpty())continue;
                 JSONArray q=prices.get(ticker); Object p=q==null?null:q.opt(pi), ch=q==null?null:q.opt(ci);
-                stocks.add(new Stock(ticker,name,number(p),number(ch)));
+                double pct = Double.NaN;
+                try { if(p!=null && p!=JSONObject.NULL && ch!=null && ch!=JSONObject.NULL) { double last=Double.parseDouble(p.toString()), delta=Double.parseDouble(ch.toString()); double prev=last-delta; if(prev>0) pct=(delta/prev)*100.0; } } catch(Exception ignored) {}
+                stocks.add(new Stock(ticker,name,number(p),number(ch),pct));
             }
             stocks.sort((a,b)->a.ticker.compareTo(b.ticker));
+            renderAnalytics();
         } catch(Exception ignored) {}
     }
     private int column(JSONArray a,String name) { for(int i=0;i<a.length();i++) if(name.equals(a.optString(i)))return i; return -1; }
@@ -153,6 +160,23 @@ public class MainActivity extends Activity {
         if(x==null || x==JSONObject.NULL) return "—";
         try { return String.format(Locale.US,"%.2f",Double.parseDouble(x.toString())); } catch(Exception e){return "—";}
     }
+    private void renderAnalytics() {
+        if(analytics==null) return;
+        analytics.removeAllViews();
+        ArrayList<Stock> valid=new ArrayList<>(); int up=0, down=0, flat=0; double sum=0;
+        for(Stock st:stocks) { if(Double.isNaN(st.changePct)) continue; valid.add(st); sum+=st.changePct; if(st.changePct>0.0001) up++; else if(st.changePct< -0.0001) down++; else flat++; }
+        int n=valid.size();
+        if(n==0) { analytics.addView(text("Нет данных для расчёта. Обновите котировки при открытом доступе к MOEX.",14,false)); return; }
+        analytics.addView(text("Инструментов с котировками: "+n+"   •   Среднее изменение: "+String.format(Locale.US,"%+.2f%%",sum/n),15,true));
+        analytics.addView(text("Растут: "+up+"   •   Снижаются: "+down+"   •   Без изменения: "+flat,14,false));
+        ArrayList<Stock> ranked=new ArrayList<>(valid); ranked.sort((a,b)->Double.compare(b.changePct,a.changePct));
+        analytics.addView(text("Лидеры роста",16,true));
+        for(int i=0;i<Math.min(5,ranked.size());i++) { Stock st=ranked.get(i); analytics.addView(text((i+1)+". "+st.ticker+" — "+String.format(Locale.US,"%+.2f%%",st.changePct),14,false)); }
+        analytics.addView(text("Лидеры снижения",16,true)); ranked.sort((a,b)->Double.compare(a.changePct,b.changePct));
+        for(int i=0;i<Math.min(5,ranked.size());i++) { Stock st=ranked.get(i); analytics.addView(text((i+1)+". "+st.ticker+" — "+String.format(Locale.US,"%+.2f%%",st.changePct),14,false)); }
+        analytics.addView(text("Изменение рассчитано относительно предыдущей цены закрытия. Это обзор текущего среза, не прогноз.",12,false));
+    }
+
     private void render(String query) {
         list.removeAllViews();
         String q=query==null?"":query.trim().toLowerCase(Locale.ROOT);
@@ -211,7 +235,9 @@ strings.write_text("""<resources>
 """, encoding="utf-8")
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
-    g = g.replace('versionCode 3', 'versionCode 5').replace('versionName "2.0.0"', 'versionName "3.1.0"')
+    import re
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 6', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.2.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 print("Patched standalone Prosperity Android app")
