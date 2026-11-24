@@ -70,8 +70,11 @@ jobs:
           import pathlib, sys
           p = pathlib.Path(sys.argv[1])
           s = p.read_text(encoding="utf-8")
-          if "androidx.core:core" not in s:
-              s += "\ndependencies { implementation 'androidx.core:core:1.13.1' }\n"
+          deps = []
+          if "androidx.core:core" not in s: deps.append("implementation 'androidx.core:core:1.13.1'")
+          if "androidx.work:work-runtime" not in s: deps.append("implementation 'androidx.work:work-runtime:2.9.1'")
+          if deps:
+              s += "\ndependencies { " + "; ".join(deps) + " }\n"
               p.write_text(s, encoding="utf-8")
           print(f"Verified AndroidX Core dependency in {p}")
           PY
