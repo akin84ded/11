@@ -174,6 +174,17 @@ public class MainActivity extends Activity {
         for(int i=0;i<Math.min(5,ranked.size());i++) { Stock st=ranked.get(i); analytics.addView(text((i+1)+". "+st.ticker+" — "+String.format(Locale.US,"%+.2f%%",st.changePct),14,false)); }
         analytics.addView(text("Лидеры снижения",16,true)); ranked.sort((a,b)->Double.compare(a.changePct,b.changePct));
         for(int i=0;i<Math.min(5,ranked.size());i++) { Stock st=ranked.get(i); analytics.addView(text((i+1)+". "+st.ticker+" — "+String.format(Locale.US,"%+.2f%%",st.changePct),14,false)); }
+        analytics.addView(text("Кандидаты для наблюдения",16,true));
+        int candidates=0;
+        for(int i=0;i<ranked.size() && candidates<5;i++) {
+            Stock st=ranked.get(i);
+            if(st.changePct>0.0 && st.changePct<=3.0) {
+                analytics.addView(text("• "+st.ticker+" — "+String.format(Locale.US,"%+.2f%%",st.changePct)+" за день",14,false));
+                candidates++;
+            }
+        }
+        if(candidates==0) analytics.addView(text("Сейчас нет бумаг с умеренным положительным изменением по текущему фильтру.",13,false));
+        analytics.addView(text("Фильтр — только первичный сигнал по дневному изменению. Перед покупкой проверьте график, ликвидность, новости и риск. Рост за день сам по себе не означает, что бумагу стоит покупать.",12,false));
         analytics.addView(text("Изменение рассчитано относительно предыдущей цены закрытия. Это обзор текущего среза, не прогноз.",12,false));
     }
 
@@ -236,8 +247,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 6', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.2.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 7', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.3.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 print("Patched standalone Prosperity Android app")
