@@ -31,7 +31,9 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private SharedPreferences prefs;
-    private LinearLayout list, root, analytics;
+    private LinearLayout list, root, analytics, watchList, portfolioList;
+    private final ArrayList<Candidate> candidates = new ArrayList<>();
+    private final ArrayList<Holding> holdings = new ArrayList<>();
     private EditText search;
     private TextView status;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -42,12 +44,22 @@ public class MainActivity extends Activity {
         double changePct;
         Stock(String t, String n, String p, String c, double pct) { ticker=t; name=n; price=p; change=c; changePct=pct; }
     }
+    private static class Candidate {
+        String ticker; double entry, stop, target;
+        Candidate(String t,double e,double s,double g){ticker=t;entry=e;stop=s;target=g;}
+    }
+    private static class Holding {
+        String ticker; double quantity,buy,stop,target;
+        Holding(String t,double q,double b,double s,double g){ticker=t;quantity=q;buy=b;stop=s;target=g;}
+    }
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = getSharedPreferences("prosperity", MODE_PRIVATE);
+        loadPlans();
         buildScreen();
         showCached();
+        renderPlans();
         refreshQuotes();
     }
 
@@ -76,7 +88,17 @@ public class MainActivity extends Activity {
         root.addView(text("Аналитика рынка", 21, true));
         analytics = new LinearLayout(this); analytics.setOrientation(LinearLayout.VERTICAL);
         root.addView(analytics);
-        root.addView(text("Мои акции", 20, true));
+        root.addView(text("Кандидаты — план входа", 20, true));
+        root.addView(text("Добавляйте интересующие тикеры вручную и задавайте цену входа, стоп и цель.",12,false));
+        Button addCandidate = new Button(this); addCandidate.setText("Добавить кандидата");
+        root.addView(addCandidate); watchList = new LinearLayout(this); watchList.setOrientation(LinearLayout.VERTICAL); root.addView(watchList);
+        addCandidate.setOnClickListener(v -> candidateDialog(null));
+        root.addView(text("Мои акции — портфель", 20, true));
+        root.addView(text("Здесь учитываются только ваши реальные позиции: количество и цена покупки.",12,false));
+        Button addHolding = new Button(this); addHolding.setText("Добавить акцию в портфель");
+        root.addView(addHolding); portfolioList = new LinearLayout(this); portfolioList.setOrientation(LinearLayout.VERTICAL); root.addView(portfolioList);
+        addHolding.setOnClickListener(v -> holdingDialog(null));
+        root.addView(text("Котировки и заметки", 20, true));
         list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); root.addView(list);
         find.setOnClickListener(v -> render(search.getText().toString()));
         search.setOnEditorActionListener((v,a,e) -> { render(search.getText().toString()); return true; });
@@ -153,6 +175,7 @@ public class MainActivity extends Activity {
             }
             stocks.sort((a,b)->a.ticker.compareTo(b.ticker));
             renderAnalytics();
+            renderPlans();
         } catch(Exception ignored) {}
     }
     private int column(JSONArray a,String name) { for(int i=0;i<a.length();i++) if(name.equals(a.optString(i)))return i; return -1; }
@@ -207,6 +230,108 @@ public class MainActivity extends Activity {
             shown++; if(shown>=150)break;
         }
         if(shown==0) list.addView(text(stocks.isEmpty()?"Список пока пуст. Нажмите «Обновить котировки» при наличии интернета.":"Ничего не найдено. Проверьте тикер или название.",15,false));
+    }
+    private EditText field(String hint) {
+        EditText e=new EditText(this); e.setSingleLine(true); e.setHint(hint);
+        e.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        return e;
+    }
+    private EditText numericField(String hint) {
+        EditText e=field(hint); e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        return e;
+    }
+    private double val(EditText e) {
+        try { return Double.parseDouble(e.getText().toString().trim().replace(',','.')); } catch(Exception ex){ return 0; }
+    }
+    private double current(String ticker) {
+        for(Stock st:stocks) if(st.ticker.equalsIgnoreCase(ticker)) {
+            try { return Double.parseDouble(st.price.replace(',','.')); } catch(Exception ignored) {}
+        }
+        return Double.NaN;
+    }
+    private void loadPlans() {
+        try {
+            JSONArray a=new JSONArray(prefs.getString("candidates","[]"));
+            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);candidates.add(new Candidate(o.getString("ticker"),o.optDouble("entry"),o.optDouble("stop"),o.optDouble("target")));}
+        } catch(Exception ignored) {}
+        try {
+            JSONArray a=new JSONArray(prefs.getString("holdings","[]"));
+            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);holdings.add(new Holding(o.getString("ticker"),o.optDouble("quantity"),o.optDouble("buy"),o.optDouble("stop"),o.optDouble("target")));}
+        } catch(Exception ignored) {}
+    }
+    private void savePlans() {
+        try {
+            JSONArray a=new JSONArray();
+            for(Candidate c:candidates){JSONObject o=new JSONObject();o.put("ticker",c.ticker);o.put("entry",c.entry);o.put("stop",c.stop);o.put("target",c.target);a.put(o);}
+            JSONArray h=new JSONArray();
+            for(Holding x:holdings){JSONObject o=new JSONObject();o.put("ticker",x.ticker);o.put("quantity",x.quantity);o.put("buy",x.buy);o.put("stop",x.stop);o.put("target",x.target);h.put(o);}
+            prefs.edit().putString("candidates",a.toString()).putString("holdings",h.toString()).apply();
+        } catch(Exception ignored) {}
+    }
+    private void candidateDialog(Candidate existing) {
+        LinearLayout box=new LinearLayout(this);box.setPadding(dp(16),dp(8),dp(16),0);box.setOrientation(LinearLayout.VERTICAL);
+        EditText ticker=field("Тикер, например SBER"); EditText entry=numericField("Цена входа (₽)");
+        EditText stop=numericField("Стоп-цена (₽, необязательно)"); EditText target=numericField("Цель / цена выхода (₽, необязательно)");
+        box.addView(ticker);box.addView(entry);box.addView(stop);box.addView(target);
+        if(existing!=null){ticker.setText(existing.ticker);ticker.setEnabled(false);entry.setText(existing.entry==0?"":String.valueOf(existing.entry));stop.setText(existing.stop==0?"":String.valueOf(existing.stop));target.setText(existing.target==0?"":String.valueOf(existing.target));}
+        new AlertDialog.Builder(this).setTitle(existing==null?"Новый кандидат":"Изменить план входа").setView(box)
+          .setPositiveButton("Сохранить",(d,w)->{
+            String t=ticker.getText().toString().trim().toUpperCase(Locale.ROOT);
+            if(t.isEmpty()||val(entry)<=0){Toast.makeText(this,"Укажите тикер и цену входа",Toast.LENGTH_LONG).show();return;}
+            Candidate c=new Candidate(t,val(entry),val(stop),val(target));
+            if(existing!=null)candidates.remove(existing);candidates.add(c);savePlans();renderPlans();
+          }).setNegativeButton("Отмена",null).show();
+    }
+    private void holdingDialog(Holding existing) {
+        LinearLayout box=new LinearLayout(this);box.setPadding(dp(16),dp(8),dp(16),0);box.setOrientation(LinearLayout.VERTICAL);
+        EditText ticker=field("Тикер, например SBER"); EditText qty=numericField("Количество акций (шт.)");
+        EditText buy=numericField("Средняя цена покупки (₽)"); EditText stop=numericField("Стоп-цена выхода (₽, необязательно)");
+        EditText target=numericField("Целевая цена выхода (₽, необязательно)");
+        box.addView(ticker);box.addView(qty);box.addView(buy);box.addView(stop);box.addView(target);
+        if(existing!=null){ticker.setText(existing.ticker);ticker.setEnabled(false);qty.setText(String.valueOf(existing.quantity));buy.setText(String.valueOf(existing.buy));stop.setText(existing.stop==0?"":String.valueOf(existing.stop));target.setText(existing.target==0?"":String.valueOf(existing.target));}
+        new AlertDialog.Builder(this).setTitle(existing==null?"Добавить позицию":"Изменить позицию").setView(box)
+          .setPositiveButton("Сохранить",(d,w)->{
+            String t=ticker.getText().toString().trim().toUpperCase(Locale.ROOT);
+            if(t.isEmpty()||val(qty)<=0||val(buy)<=0){Toast.makeText(this,"Укажите тикер, количество и цену покупки",Toast.LENGTH_LONG).show();return;}
+            Holding h=new Holding(t,val(qty),val(buy),val(stop),val(target));
+            if(existing!=null)holdings.remove(existing);holdings.add(h);savePlans();renderPlans();
+          }).setNegativeButton("Отмена",null).show();
+    }
+    private void renderPlans() {
+        if(watchList==null||portfolioList==null)return;
+        watchList.removeAllViews();portfolioList.removeAllViews();
+        if(candidates.isEmpty())watchList.addView(text("Кандидатов пока нет. Добавьте тикер и плановую цену входа.",14,false));
+        for(Candidate c:new ArrayList<>(candidates)){
+            double p=current(c.ticker);String signal=Double.isNaN(p)?"Нет котировки":p<=c.entry?"Цена входа достигнута или ниже": "Ожидание входа";
+            if(c.stop>0&&!Double.isNaN(p)&&p<=c.stop)signal="Стоп-уровень достигнут";
+            if(c.target>0&&!Double.isNaN(p)&&p>=c.target)signal="Цель достигнута";
+            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(10),dp(6),dp(10),dp(6));card.setBackgroundColor(0xffffffff);watchList.addView(card);
+            card.addView(text(c.ticker+" • текущая цена: "+(Double.isNaN(p)?"—":number(p)),16,true));
+            card.addView(text("Вход: "+number(c.entry)+" ₽ • Стоп: "+(c.stop>0?number(c.stop):"—")+" • Цель: "+(c.target>0?number(c.target):"—"),13,false));
+            card.addView(text("Сигнал: "+signal,14,true));
+            LinearLayout buttons=new LinearLayout(this);Button edit=new Button(this);edit.setText("Изменить");Button del=new Button(this);del.setText("Удалить");buttons.addView(edit);buttons.addView(del);card.addView(buttons);
+            edit.setOnClickListener(v->candidateDialog(c));del.setOnClickListener(v->{candidates.remove(c);savePlans();renderPlans();});
+        }
+        if(holdings.isEmpty())portfolioList.addView(text("Портфель пуст. Добавьте фактически купленные акции.",14,false));
+        double totalCost=0,totalValue=0;
+        for(Holding h:new ArrayList<>(holdings)){
+            double p=current(h.ticker);double cost=h.quantity*h.buy;totalCost+=cost;
+            String currentText=Double.isNaN(p)?"—":number(p)+" ₽";
+            String pnl=Double.isNaN(p)?"Нет котировки":String.format(Locale.US,"%+.2f ₽ (%+.2f%%)",(p-h.buy)*h.quantity,(p-h.buy)/h.buy*100);
+            if(!Double.isNaN(p))totalValue+=p*h.quantity;
+            String signal="Держать под наблюдением";
+            if(!Double.isNaN(p)&&h.stop>0&&p<=h.stop)signal="Уровень стоп-выхода достигнут";
+            else if(!Double.isNaN(p)&&h.target>0&&p>=h.target)signal="Целевая цена выхода достигнута";
+            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(10),dp(6),dp(10),dp(6));card.setBackgroundColor(0xffffffff);portfolioList.addView(card);
+            card.addView(text(h.ticker+" • "+h.quantity+" шт.",16,true));
+            card.addView(text("Покупка: "+number(h.buy)+" ₽ • Сейчас: "+currentText,13,false));
+            card.addView(text("Стоимость покупки: "+number(cost)+" ₽ • Результат: "+pnl,13,false));
+            card.addView(text("Выход: стоп "+(h.stop>0?number(h.stop):"—")+" ₽ / цель "+(h.target>0?number(h.target):"—")+" ₽",13,false));
+            card.addView(text("Контроль: "+signal,14,true));
+            LinearLayout buttons=new LinearLayout(this);Button edit=new Button(this);edit.setText("Изменить");Button del=new Button(this);del.setText("Удалить");buttons.addView(edit);buttons.addView(del);card.addView(buttons);
+            edit.setOnClickListener(v->holdingDialog(h));del.setOnClickListener(v->{holdings.remove(h);savePlans();renderPlans();});
+        }
+        if(!holdings.isEmpty())portfolioList.addView(text("Вложено: "+number(totalCost)+" ₽ • Текущая стоимость по доступным котировкам: "+number(totalValue)+" ₽",14,true));
     }
     private void editNote(Stock s,TextView view,Button button) {
         EditText input=new EditText(this); input.setMinLines(3); input.setGravity(Gravity.TOP);
