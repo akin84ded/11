@@ -27,7 +27,6 @@ import androidx.core.content.ContextCompat;
 import androidx.work.Constraints;
 import androidx.work.NetworkType;
 import androidx.work.PeriodicWorkRequest;
-import androidx.work.PeriodicWorkRequestBuilder;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.WorkManager;
 import org.json.JSONArray;
