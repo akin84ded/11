@@ -20,6 +20,16 @@ import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.work.Constraints;
+import androidx.work.NetworkType;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.PeriodicWorkRequestBuilder;
+import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.WorkManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.*;
@@ -58,9 +68,22 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences("prosperity", MODE_PRIVATE);
         loadPlans();
         buildScreen();
+        requestNotificationPermission();
+        schedulePriceMonitor();
         showCached();
         renderPlans();
         refreshQuotes();
+    }
+
+    private void requestNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 701);
+        }
+    }
+    private void schedulePriceMonitor() {
+        Constraints constraints = new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+        PeriodicWorkRequest request = new PeriodicWorkRequest.Builder(PriceMonitorWorker.class, 15, java.util.concurrent.TimeUnit.MINUTES).setConstraints(constraints).build();
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork("prosperity-price-monitor", ExistingPeriodicWorkPolicy.KEEP, request);
     }
 
     private int dp(float n) { return (int)(n * getResources().getDisplayMetrics().density + .5f); }
@@ -347,6 +370,7 @@ public class MainActivity extends Activity {
 manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
@@ -372,8 +396,103 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 8', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.4.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 9', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.5.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
+worker = java.parent / "PriceMonitorWorker.java"
+worker.write_text(r'''package ru.mos2.app;
+
+import android.Manifest;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
+import androidx.work.Worker;
+import androidx.work.WorkerParameters;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+
+public class PriceMonitorWorker extends Worker {
+    public PriceMonitorWorker(Context context, WorkerParameters params) { super(context, params); }
+
+    @Override public Result doWork() {
+        try {
+            JSONObject data = download();
+            HashMap<String,Double> prices = parse(data);
+            android.content.SharedPreferences p = getApplicationContext().getSharedPreferences("prosperity", Context.MODE_PRIVATE);
+            JSONArray candidates = new JSONArray(p.getString("candidates","[]"));
+            JSONArray holdings = new JSONArray(p.getString("holdings","[]"));
+            for (int i=0;i<candidates.length();i++) {
+                JSONObject o=candidates.getJSONObject(i); String t=o.optString("ticker");
+                Double price=prices.get(t); if(price==null) continue;
+                double entry=o.optDouble("entry"), stop=o.optDouble("stop"), target=o.optDouble("target");
+                alert(p,t,"entry",price<=entry,"Цена входа достигнута: "+t+" — "+fmt(price)+" ₽");
+                alert(p,t,"stop",stop>0&&price<=stop,"Стоп-уровень: "+t+" — "+fmt(price)+" ₽");
+                alert(p,t,"target",target>0&&price>=target,"Цель достигнута: "+t+" — "+fmt(price)+" ₽");
+            }
+            for (int i=0;i<holdings.length();i++) {
+                JSONObject o=holdings.getJSONObject(i); String t=o.optString("ticker");
+                Double price=prices.get(t); if(price==null) continue;
+                double stop=o.optDouble("stop"), target=o.optDouble("target");
+                alert(p,t,"holding_stop",stop>0&&price<=stop,"Проверить выход по стопу: "+t+" — "+fmt(price)+" ₽");
+                alert(p,t,"holding_target",target>0&&price>=target,"Целевая цена выхода: "+t+" — "+fmt(price)+" ₽");
+            }
+            return Result.success();
+        } catch(Exception e) { return Result.retry(); }
+    }
+
+    private JSONObject download() throws Exception {
+        String path="/iss/engines/stock/markets/shares/securities.json?iss.meta=off&iss.only=securities,marketdata&securities.columns=SECID,SHORTNAME&marketdata.columns=SECID,LAST,CHANGE&limit=1000";
+        Exception last=null;
+        for(String scheme:new String[]{"http","https"}) {
+            HttpURLConnection c=null;
+            try {
+                c=(HttpURLConnection)new URL(scheme+"://iss.moex.com"+path).openConnection();
+                c.setConnectTimeout(10000); c.setReadTimeout(15000); c.setRequestProperty("User-Agent","Prosperity-Android/1.0");
+                if(c.getResponseCode()!=200) throw new IOException("HTTP "+c.getResponseCode());
+                ByteArrayOutputStream out=new ByteArrayOutputStream();
+                try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);}
+                return new JSONObject(new String(out.toByteArray(),StandardCharsets.UTF_8));
+            } catch(Exception e){last=e;} finally {if(c!=null)c.disconnect();}
+        }
+        throw new IOException("MOEX unavailable",last);
+    }
+
+    private HashMap<String,Double> parse(JSONObject data) throws Exception {
+        HashMap<String,Double> out=new HashMap<>();
+        JSONObject md=data.getJSONObject("marketdata"); JSONArray cols=md.getJSONArray("columns"), rows=md.getJSONArray("data");
+        int ti=-1,pi=-1;
+        for(int i=0;i<cols.length();i++){if("SECID".equals(cols.optString(i)))ti=i;if("LAST".equals(cols.optString(i)))pi=i;}
+        if(ti<0||pi<0)return out;
+        for(int i=0;i<rows.length();i++){JSONArray r=rows.getJSONArray(i);Object v=r.opt(pi);if(v!=null&&v!=JSONObject.NULL)try{out.put(r.optString(ti),Double.parseDouble(v.toString()));}catch(Exception ignored){}}
+        return out;
+    }
+
+    private void alert(android.content.SharedPreferences p,String ticker,String rule,boolean active,String message) {
+        String key="alert_"+ticker+"_"+rule; boolean was=p.getBoolean(key,false);
+        if(!active){if(was)p.edit().putBoolean(key,false).apply();return;}
+        if(was)return;
+        p.edit().putBoolean(key,true).apply();
+        Context c=getApplicationContext();
+        if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
+        NotificationManager nm=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
+        if(Build.VERSION.SDK_INT>=26)nm.createNotificationChannel(new NotificationChannel("prosperity_alerts","Сигналы Процветания",NotificationManager.IMPORTANCE_HIGH));
+        NotificationCompat.Builder b=new NotificationCompat.Builder(c,"prosperity_alerts")
+            .setSmallIcon(c.getApplicationInfo().icon).setContentTitle("Процветание — ценовой сигнал")
+            .setContentText(message).setStyle(new NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true);
+        nm.notify((ticker+"_"+rule).hashCode(),b.build());
+    }
+    private String fmt(double v){return String.format(Locale.US,"%.2f",v);}
+}
+''', encoding="utf-8")
+
 print("Patched standalone Prosperity Android app")
