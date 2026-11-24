@@ -479,13 +479,13 @@ public class PriceMonitorWorker extends Worker {
         String key="alert_"+ticker+"_"+rule; boolean was=p.getBoolean(key,false);
         if(!active){if(was)p.edit().putBoolean(key,false).apply();return;}
         if(was)return;
-        p.edit().putBoolean(key,true).apply();
         Context c=getApplicationContext();
         if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
+        p.edit().putBoolean(key,true).apply();
         NotificationManager nm=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
         if(Build.VERSION.SDK_INT>=26)nm.createNotificationChannel(new NotificationChannel("prosperity_alerts","Сигналы Процветания",NotificationManager.IMPORTANCE_HIGH));
         NotificationCompat.Builder b=new NotificationCompat.Builder(c,"prosperity_alerts")
-            .setSmallIcon(c.getApplicationInfo().icon).setContentTitle("Процветание — ценовой сигнал")
+            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Процветание — ценовой сигнал")
             .setContentText(message).setStyle(new NotificationCompat.BigTextStyle().bigText(message))
             .setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true);
         nm.notify((ticker+"_"+rule).hashCode(),b.build());
