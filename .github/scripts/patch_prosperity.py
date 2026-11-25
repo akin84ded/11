@@ -249,6 +249,7 @@ public class MainActivity extends Activity {
             nt.setTextColor(0xff52606d); card.addView(nt);
             Button edit=new Button(this); edit.setText(note.isEmpty()?"Добавить заметку":"Изменить заметку");
             card.addView(edit); edit.setOnClickListener(v->editNote(s,nt,edit));
+            Button analysis=new Button(this); analysis.setText("Полный анализ и рекомендация"); card.addView(analysis); analysis.setOnClickListener(v->analyzeStock(s));
             shown++; if(shown>=150)break;
         }
         if(shown==0) list.addView(text(stocks.isEmpty()?"Список пока пуст. Нажмите «Обновить котировки» при наличии интернета.":"Ничего не найдено. Проверьте тикер или название.",15,false));
@@ -355,7 +356,73 @@ public class MainActivity extends Activity {
         }
         if(!holdings.isEmpty())portfolioList.addView(text("Вложено: "+number(totalCost)+" ₽ • Текущая стоимость по доступным котировкам: "+number(totalValue)+" ₽",14,true));
     }
-    private void editNote(Stock s,TextView view,Button button) {
+
+    private static class Candle { double open,high,low,close,volume; String date; }
+    private void analyzeStock(Stock stock) {
+        status.setText("Загружаю дневную историю " + stock.ticker + " для анализа…");
+        io.execute(() -> {
+            try {
+                Calendar cal=Calendar.getInstance(); cal.add(Calendar.DAY_OF_YEAR,-420);
+                String from=String.format(Locale.US,"%tF",cal);
+                String path="/iss/engines/stock/markets/shares/securities/"+URLEncoder.encode(stock.ticker,"UTF-8")+"/candles.json?from="+from+"&interval=24&start=0";
+                JSONObject data=null; Exception last=null;
+                for(String scheme:new String[]{"http","https"}) {
+                    HttpURLConnection c=null;
+                    try {
+                        c=(HttpURLConnection)new URL(scheme+"://iss.moex.com"+path).openConnection();
+                        c.setConnectTimeout(12000);c.setReadTimeout(20000);c.setRequestProperty("User-Agent","Prosperity-Android/1.0");
+                        if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
+                        ByteArrayOutputStream out=new ByteArrayOutputStream();
+                        try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);}
+                        data=new JSONObject(new String(out.toByteArray(),StandardCharsets.UTF_8));break;
+                    } catch(Exception e){last=e;} finally {if(c!=null)c.disconnect();}
+                }
+                if(data==null)throw new IOException("Не удалось получить историю: "+(last==null?"нет ответа":last.getMessage()));
+                JSONObject block=data.getJSONObject("candles");JSONArray cols=block.getJSONArray("columns"),rows=block.getJSONArray("data");
+                int ci=column(cols,"close"),hi=column(cols,"high"),lo=column(cols,"low"),oi=column(cols,"open"),vi=column(cols,"volume"),di=column(cols,"begin");
+                ArrayList<Candle> candles=new ArrayList<>();
+                for(int i=0;i<rows.length();i++){JSONArray r=rows.getJSONArray(i);if(ci<0||r.isNull(ci))continue;Candle x=new Candle();x.close=r.optDouble(ci);x.high=hi>=0?r.optDouble(hi):x.close;x.low=lo>=0?r.optDouble(lo):x.close;x.open=oi>=0?r.optDouble(oi):x.close;x.volume=vi>=0?r.optDouble(vi):0;x.date=di>=0?r.optString(di):"";if(x.close>0)candles.add(x);}
+                final String report=buildAnalysis(stock,candles);
+                runOnUiThread(()->{status.setText("Анализ "+stock.ticker+" готов. История: "+candles.size()+" дневных свечей.");new AlertDialog.Builder(this).setTitle("Аналитика: "+stock.ticker).setMessage(report).setPositiveButton("Понятно",null).show();});
+            } catch(Exception e){runOnUiThread(()->{status.setText("Не удалось получить историю "+stock.ticker);new AlertDialog.Builder(this).setTitle("Анализ недоступен").setMessage(e.getMessage()+"\\nПроверьте доступ к MOEX и повторите попытку.").setPositiveButton("OK",null).show();});}
+        });
+    }
+    private double sma(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double sum=0;for(int i=end-period;i<end;i++)sum+=a.get(i).close;return sum/period;}
+    private double ema(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double v=0;for(int i=end-period;i<end;i++)v+=a.get(i).close;v/=period;double k=2.0/(period+1);for(int i=end;i<a.size();i++)v=a.get(i).close*k+v*(1-k);return v;}
+    private double rsi(ArrayList<Candle> a,int period) {if(a.size()<=period)return Double.NaN;double up=0,dn=0;for(int i=1;i<=period;i++){double d=a.get(i).close-a.get(i-1).close;if(d>0)up+=d;else dn-=d;}up/=period;dn/=period;for(int i=period+1;i<a.size();i++){double d=a.get(i).close-a.get(i-1).close;up=(up*(period-1)+Math.max(0,d))/period;dn=(dn*(period-1)+Math.max(0,-d))/period;}if(dn==0)return 100;return 100-100/(1+up/dn);}
+    private String buildAnalysis(Stock st,ArrayList<Candle> a) {
+        if(a.size()<55)return "Для надёжного расчёта нужно не менее 55 дневных свечей. Получено: "+a.size()+".";
+        int n=a.size();double p=a.get(n-1).close,s20=sma(a,n,20),s50=sma(a,n,50),s200=sma(a,n,200),r=rsi(a,14);
+        double e12=ema(a,n,12),e26=ema(a,n,26),macd=e12-e26;
+        double prev12=ema(a,n-1,12),prev26=ema(a,n-1,26),prevMacd=prev12-prev26;
+        double atr=0;for(int i=n-14;i<n;i++){Candle x=a.get(i),pr=a.get(i-1);atr+=Math.max(x.high-x.low,Math.max(Math.abs(x.high-pr.close),Math.abs(x.low-pr.close)));}atr/=14;
+        double support=Double.MAX_VALUE,resistance=0,vol=0;int vc=0;
+        for(int i=Math.max(0,n-20);i<n;i++){Candle x=a.get(i);support=Math.min(support,x.low);resistance=Math.max(resistance,x.high);if(x.volume>0){vol+=x.volume;vc++;}}
+        double avgVol=vc==0?0:vol/vc,lastVol=a.get(n-1).volume;
+        int score=0;ArrayList<String> pros=new ArrayList<>(),cons=new ArrayList<>();
+        if(p>s20){score++;pros.add("цена выше SMA20 — краткосрочный тренд положительный");}else{score--;cons.add("цена ниже SMA20 — краткосрочный тренд слабый");}
+        if(s20>s50){score++;pros.add("SMA20 выше SMA50 — среднесрочный тренд восходящий");}else{score--;cons.add("SMA20 ниже SMA50 — среднесрочный тренд нисходящий");}
+        if(!Double.isNaN(s200)){if(p>s200){score++;pros.add("цена выше SMA200 — долгосрочный фон положительный");}else{score--;cons.add("цена ниже SMA200 — долгосрочный фон слабый");}}
+        if(macd>prevMacd){score++;pros.add("MACD растёт — импульс улучшается");}else{score--;cons.add("MACD снижается — импульс ослабевает");}
+        if(r<30){score++;pros.add("RSI ниже 30 — возможна перепроданность, нужен разворотный сигнал");}else if(r>70){score-=2;cons.add("RSI выше 70 — повышен риск перегрева и отката");}else if(r>=50){score++;pros.add("RSI выше 50 — умеренно положительный импульс");}else cons.add("RSI ниже 50 — импульс пока слабый");
+        String verdict=score>=3?"ИНТЕРЕСНА ДЛЯ ДАЛЬНЕЙШЕГО ИЗУЧЕНИЯ":score<=-2?"ПОКА ЛУЧШЕ НЕ СПЕШИТЬ":"НЕЙТРАЛЬНО — ЖДАТЬ ПОДТВЕРЖДЕНИЯ";
+        double entry=p<=s20?p:Math.min(s20,p-0.5*atr);if(entry<=0)entry=p;
+        double stop=Math.max(0,entry-1.5*atr),target=entry+3.0*atr;
+        StringBuilder b=new StringBuilder();
+        b.append("ВЫВОД: ").append(verdict).append("\\nОценка модели: ").append(score).append(" баллов. Это фильтр технических условий, не гарантия доходности.\\n\\n");
+        b.append("ТЕКУЩИЕ ПОКАЗАТЕЛИ\\nЦена: ").append(fmt(p)).append(" ₽\\nSMA20: ").append(fmt(s20)).append(" ₽\\nSMA50: ").append(fmt(s50)).append(" ₽\\n");
+        if(!Double.isNaN(s200))b.append("SMA200: ").append(fmt(s200)).append(" ₽\\n");
+        b.append("RSI(14): ").append(fmt(r)).append("\\nMACD (EMA12−EMA26): ").append(fmt(macd)).append("\\nATR(14): ").append(fmt(atr)).append(" ₽\\n");
+        b.append("Поддержка за 20 сессий: ").append(fmt(support)).append(" ₽\\nСопротивление за 20 сессий: ").append(fmt(resistance)).append(" ₽\\n");
+        if(avgVol>0)b.append("Объём последней сессии / средний объём: ").append(fmt(lastVol)).append(" / ").append(fmt(avgVol)).append("\\n");
+        b.append("\\nЧТО ГОВОРЯТ ИНДИКАТОРЫ\\n");for(String x:pros)b.append("＋ ").append(x).append("\\n");for(String x:cons)b.append("− ").append(x).append("\\n");
+        b.append("\\nПЛАН ДЛЯ НАБЛЮДЕНИЯ (не приказ на сделку)\\nЗона возможного входа: около ").append(fmt(entry)).append(" ₽\\nУсловный стоп: ").append(fmt(stop)).append(" ₽\\nУсловная цель: ").append(fmt(target)).append(" ₽\\nРиск на акцию: ").append(fmt(entry-stop)).append(" ₽; потенциал: ").append(fmt(target-entry)).append(" ₽ (ориентир 1:2).\\n");
+        b.append("\\nДЕЙСТВИЕ: ").append(score>=3?"не покупать по одному сигналу; дождаться удержания цены выше зоны входа и проверить ликвидность/новости.":score<=-2?"не открывать новую позицию до улучшения тренда; если акция уже в портфеле — проверить заранее заданный риск и стоп.":"добавить в наблюдение и ждать совпадения тренда, RSI и уровня поддержки.");
+        b.append("\\n\\nДанные: дневные свечи MOEX ISS, ").append(a.get(0).date).append(" — ").append(a.get(n-1).date).append(". Без учёта комиссий, проскальзывания, дивидендов и налогов.");
+        return b.toString();
+    }
+    private String fmt(double v){return Double.isNaN(v)?"н/д":String.format(Locale.US,"%.2f",v);}
+\n    private void editNote(Stock s,TextView view,Button button) {
         EditText input=new EditText(this); input.setMinLines(3); input.setGravity(Gravity.TOP);
         input.setText(prefs.getString("note_"+s.ticker,""));
         new AlertDialog.Builder(this).setTitle("Заметка: "+s.ticker).setView(input)
@@ -395,8 +462,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 9', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.5.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 10', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.6.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
