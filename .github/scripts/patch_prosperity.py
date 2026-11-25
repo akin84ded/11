@@ -447,7 +447,7 @@ public class MainActivity extends Activity {
     private double ema(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double v=0;for(int i=0;i<period;i++)v+=a.get(i).close;v/=period;double k=2.0/(period+1);for(int i=period;i<end;i++)v=a.get(i).close*k+v*(1-k);return v;}
     private double rsi(ArrayList<Candle> a,int period) {if(a.size()<=period)return Double.NaN;double up=0,dn=0;for(int i=1;i<=period;i++){double d=a.get(i).close-a.get(i-1).close;if(d>0)up+=d;else dn-=d;}up/=period;dn/=period;for(int i=period+1;i<a.size();i++){double d=a.get(i).close-a.get(i-1).close;up=(up*(period-1)+Math.max(0,d))/period;dn=(dn*(period-1)+Math.max(0,-d))/period;}if(dn==0)return 100;return 100-100/(1+up/dn);}
     private int timeframePoints(ArrayList<Candle> a) {
-        if(a==null||a.size()<55)return -1;
+        if(a==null||a.size()<55)return -99;
         int n=a.size(); double p=a.get(n-1).close,s20=sma(a,n,20),s50=sma(a,n,50);
         double mom=(p/a.get(Math.max(0,n-6)).close-1.0)*100.0;
         double r=rsi(a,14); int v=0;
@@ -478,10 +478,10 @@ public class MainActivity extends Activity {
         if(resistance>0&&(resistance-p)/p<0.015){daily--;cons.add("близко сопротивление — потенциал ограничен");}
         int hp=timeframePoints(hourly),mp=timeframePoints(tenMinute);
         double dNorm=Math.max(0,Math.min(100,50+daily*5.0));
-        double hNorm=hp<0?50:Math.max(0,Math.min(100,50+hp*50.0/6.0));
-        double mNorm=mp<0?50:Math.max(0,Math.min(100,50+mp*50.0/6.0));
+        double hNorm=hp==-99?50:Math.max(0,Math.min(100,50+hp*50.0/6.0));
+        double mNorm=mp==-99?50:Math.max(0,Math.min(100,50+mp*50.0/6.0));
         double quality=dNorm*0.50+hNorm*0.30+mNorm*0.20;
-        boolean aligned=(daily>0&&(hp<0||hp>0)&&(mp<0||mp>0));
+        boolean aligned=(daily>0&&(hp==-99||hp>0)&&(mp==-99||mp>0));
         String verdict=quality>=70&&daily>=2?"СИЛЬНЫЕ УСЛОВИЯ ДЛЯ НАБЛЮДЕНИЯ":quality<35?"СЛАБЫЙ ФОН — НЕ СПЕШИТЬ":"НЕЙТРАЛЬНО — ЖДАТЬ ПОДТВЕРЖДЕНИЯ";
         double entry=Math.min(p-0.25*atr,Math.max(s20,support)); if(entry<=0||entry>p)entry=p-0.25*atr;
         double stop=Math.max(0,entry-1.5*atr),target=entry+3.0*atr;
@@ -492,7 +492,7 @@ public class MainActivity extends Activity {
         b.append("ДНЕВНЫЕ ПОКАЗАТЕЛИ\\nЦена: ").append(fmt(p)).append(" ₽; SMA20: ").append(fmt(s20)).append("; SMA50: ").append(fmt(s50)).append("; SMA200: ").append(fmt(s200)).append("\\n");
         b.append("RSI14: ").append(fmt(r)).append("; MACD: ").append(fmt(macd)).append("; ATR14: ").append(fmt(atr)).append(" ₽\\n");
         b.append("Поддержка: ").append(fmt(support)).append(" ₽; сопротивление: ").append(fmt(resistance)).append(" ₽\\n");
-        b.append("Оценка дневного тренда: ").append(fmt(dNorm)).append("/100; часового: ").append(hp<0?"нет данных":fmt(hNorm)+"/100").append("; 10-минутного: ").append(mp<0?"нет данных":fmt(mNorm)+"/100").append(".\\n");
+        b.append("Оценка дневного тренда: ").append(fmt(dNorm)).append("/100; часового: ").append(hp==-99?"нет данных":fmt(hNorm)+"/100").append("; 10-минутного: ").append(mp==-99?"нет данных":fmt(mNorm)+"/100").append(".\\n");
         if(avgVol>0)b.append("Объём последней сессии / средний: ").append(fmt(lastVol)).append(" / ").append(fmt(avgVol)).append("\\n");
         b.append("\\nПОДТВЕРЖДЕНИЯ\\n");for(String x:pros)b.append("＋ ").append(x).append("\\n");for(String x:cons)b.append("− ").append(x).append("\\n");
         b.append("\\nПЛАН (ориентир, не приказ)\\nЗона входа: ").append(fmt(entry)).append(" ₽; стоп: ").append(fmt(stop)).append(" ₽; цель: ").append(fmt(target)).append(" ₽\\n");
