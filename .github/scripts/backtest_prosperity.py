@@ -116,7 +116,10 @@ def backtest(ticker,a):
         fill=None
         for j in range(i+1,min(i+1+ENTRY_DAYS,len(a))):
             if a[j]["low"]<=z["entry"]:
-                fill=j;break
+                fill=j
+                # A limit order filled after a downward gap gets the opening price, not the worse limit.
+                actual_entry=min(z["entry"],a[j]["open"])
+                break
         if fill is None:
             i+=1;continue
         exit_idx=None;exit_price=None;reason=None
@@ -126,14 +129,15 @@ def backtest(ticker,a):
             hit_stop=a[j]["low"]<=stop
             hit_target=a[j]["high"]>=target
             if hit_stop and hit_target:
-                exit_idx=j;exit_price=stop;reason="both_same_bar_stop_first";break
+                exit_idx=j;exit_price=min(stop,a[j]["open"]);reason="both_same_bar_stop_first";break
             if hit_stop:
-                exit_idx=j;exit_price=stop;reason="stop";break
+                exit_idx=j;exit_price=min(stop,a[j]["open"]);reason="stop";break
             if hit_target:
-                exit_idx=j;exit_price=target;reason="target";break
+                exit_idx=j;exit_price=max(target,a[j]["open"]);reason="target";break
         if exit_idx is None:
             exit_idx=last;exit_price=a[last]["close"];reason="time_exit"
-        entry=z["entry"]
+        entry=actual_entry
+        # Keep the model's originally proposed stop/target; gap-aware execution is used for exits.
         gross=exit_price/entry-1
         net=(exit_price*(1-FEE_SIDE))/(entry*(1+FEE_SIDE))-1
         bh=(a[exit_idx]["close"]/a[fill]["open"])-1 if a[fill]["open"] else 0
