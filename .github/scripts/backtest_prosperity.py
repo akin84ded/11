@@ -102,8 +102,8 @@ def indicators(a,end):
     return {"score":score,"price":p,"atr":atr,"entry":entry,"stop":max(0,entry-1.5*atr),
             "target":entry+3*atr,"rsi":rr,"macd":macd}
 
-def make_trades(ticker,a,signal_end):
-    trades=[];i=200
+def make_trades(ticker,a,signal_end,start_idx=200):
+    trades=[];i=start_idx
     while i<signal_end-2:
         z=indicators(a,i+1)
         if z["score"]<2:i+=1;continue
@@ -154,7 +154,7 @@ def main():
             split=max(220,min(len(a)-50,int(len(a)*(1-OOS_FRACTION))))
             train=make_trades(ticker,a,split)
             # OOS trades may use pre-split candles as indicator warm-up, but signals begin at split.
-            oos=make_trades(ticker,a,len(a))
+            oos=make_trades(ticker,a,len(a),split)
             oos=[t for t in oos if t["signal_date"]>=a[split]["date"]]
             # Full-period results retained for context; train and OOS separated chronologically.
             meta={"ticker":ticker,"bars":len(a),"from":a[0]["date"],"to":a[-1]["date"],
