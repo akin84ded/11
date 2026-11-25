@@ -481,7 +481,7 @@ public class MainActivity extends Activity {
         double hNorm=hp==-99?50:Math.max(0,Math.min(100,50+hp*50.0/6.0));
         double mNorm=mp==-99?50:Math.max(0,Math.min(100,50+mp*50.0/6.0));
         double quality=dNorm*0.50+hNorm*0.30+mNorm*0.20;
-        boolean aligned=(daily>0&&(hp==-99||hp>0)&&(mp==-99||mp>0));
+        boolean aligned=(daily>0&&hp!=-99&&hp>0&&mp!=-99&&mp>0);
         String verdict=quality>=70&&daily>=2&&aligned?"СИЛЬНЫЕ УСЛОВИЯ ДЛЯ НАБЛЮДЕНИЯ":(quality<35||daily<=-2)?"СЛАБЫЙ ФОН — НЕ СПЕШИТЬ":"НЕЙТРАЛЬНО — ЖДАТЬ ПОДТВЕРЖДЕНИЯ";
         double entry=Math.min(p-0.25*atr,Math.max(s20,support)); if(entry<=0||entry>p)entry=p-0.25*atr;
         double stop=Math.max(0,entry-1.5*atr),target=entry+3.0*atr;
