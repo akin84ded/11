@@ -415,7 +415,7 @@ public class MainActivity extends Activity {
                 try{hourly=fetchCandles(stock,60,120);}catch(Exception e){hourlyError=e.getMessage();}
                 try{tenMinute=fetchCandles(stock,10,30);}catch(Exception e){tenError=e.getMessage();}
                 final ArrayList<Candle> h=hourly, m=tenMinute;
-                StringBuilder report=new StringBuilder(buildAnalysis(stock,daily));
+                StringBuilder report=new StringBuilder(buildAnalysis(stock,daily,h,m));
                 report.append("\n\n=== СРЕДНЕСРОЧНАЯ КАРТИНА: 1 ЧАС ===\n");
                 report.append(h==null?"Часовые данные временно недоступны: "+hourlyError:buildTimeframeSummary(h,"часовой график"));
                 report.append("\n\n=== КРАТКОСРОЧНАЯ КАРТИНА: 10 МИНУТ ===\n");
@@ -444,37 +444,61 @@ public class MainActivity extends Activity {
         return b.toString();
     }
     private double sma(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double sum=0;for(int i=end-period;i<end;i++)sum+=a.get(i).close;return sum/period;}
-    private double ema(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double v=0;for(int i=end-period;i<end;i++)v+=a.get(i).close;v/=period;double k=2.0/(period+1);for(int i=end;i<a.size();i++)v=a.get(i).close*k+v*(1-k);return v;}
+    private double ema(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double v=0;for(int i=0;i<period;i++)v+=a.get(i).close;v/=period;double k=2.0/(period+1);for(int i=period;i<end;i++)v=a.get(i).close*k+v*(1-k);return v;}
     private double rsi(ArrayList<Candle> a,int period) {if(a.size()<=period)return Double.NaN;double up=0,dn=0;for(int i=1;i<=period;i++){double d=a.get(i).close-a.get(i-1).close;if(d>0)up+=d;else dn-=d;}up/=period;dn/=period;for(int i=period+1;i<a.size();i++){double d=a.get(i).close-a.get(i-1).close;up=(up*(period-1)+Math.max(0,d))/period;dn=(dn*(period-1)+Math.max(0,-d))/period;}if(dn==0)return 100;return 100-100/(1+up/dn);}
-    private String buildAnalysis(Stock st,ArrayList<Candle> a) {
-        if(a.size()<55)return "Для надёжного расчёта нужно не менее 55 дневных свечей. Получено: "+a.size()+".";
+    private int timeframePoints(ArrayList<Candle> a) {
+        if(a==null||a.size()<55)return -1;
+        int n=a.size(); double p=a.get(n-1).close,s20=sma(a,n,20),s50=sma(a,n,50);
+        double mom=(p/a.get(Math.max(0,n-6)).close-1.0)*100.0;
+        double r=rsi(a,14); int v=0;
+        if(p>s20)v+=2; if(s20>s50)v+=2; if(mom>0)v++; if(r>=50&&r<=70)v++; 
+        if(r<30 && rsi(new ArrayList<Candle>(a.subList(0,n-1)),14)<30 && r>rsi(new ArrayList<Candle>(a.subList(0,n-1)),14))v++;
+        if(p<s20)v-=2; if(s20<s50)v-=2; if(mom<0)v--; if(r>75)v-=2;
+        return Math.max(-6,Math.min(6,v));
+    }
+    private String buildAnalysis(Stock st,ArrayList<Candle> a,ArrayList<Candle> hourly,ArrayList<Candle> tenMinute) {
+        if(a.size()<200)return "Для полного анализа нужно не менее 200 дневных свечей. Получено: "+a.size()+".";
         int n=a.size();double p=a.get(n-1).close,s20=sma(a,n,20),s50=sma(a,n,50),s200=sma(a,n,200),r=rsi(a,14);
-        double e12=ema(a,n,12),e26=ema(a,n,26),macd=e12-e26;
-        double prev12=ema(a,n-1,12),prev26=ema(a,n-1,26),prevMacd=prev12-prev26;
+        double macd=ema(a,n,12)-ema(a,n,26),prevMacd=ema(a,n-1,12)-ema(a,n-1,26);
         double atr=0;for(int i=n-14;i<n;i++){Candle x=a.get(i),pr=a.get(i-1);atr+=Math.max(x.high-x.low,Math.max(Math.abs(x.high-pr.close),Math.abs(x.low-pr.close)));}atr/=14;
         double support=Double.MAX_VALUE,resistance=0,vol=0;int vc=0;
-        for(int i=Math.max(0,n-20);i<n;i++){Candle x=a.get(i);support=Math.min(support,x.low);resistance=Math.max(resistance,x.high);if(x.volume>0){vol+=x.volume;vc++;}}
+        for(int i=Math.max(0,n-20);i<n-1;i++){Candle x=a.get(i);support=Math.min(support,x.low);resistance=Math.max(resistance,x.high);if(x.volume>0){vol+=x.volume;vc++;}}
         double avgVol=vc==0?0:vol/vc,lastVol=a.get(n-1).volume;
-        int score=0;ArrayList<String> pros=new ArrayList<>(),cons=new ArrayList<>();
-        if(p>s20){score++;pros.add("цена выше SMA20 — краткосрочный тренд положительный");}else{score--;cons.add("цена ниже SMA20 — краткосрочный тренд слабый");}
-        if(s20>s50){score++;pros.add("SMA20 выше SMA50 — среднесрочный тренд восходящий");}else{score--;cons.add("SMA20 ниже SMA50 — среднесрочный тренд нисходящий");}
-        if(!Double.isNaN(s200)){if(p>s200){score++;pros.add("цена выше SMA200 — долгосрочный фон положительный");}else{score--;cons.add("цена ниже SMA200 — долгосрочный фон слабый");}}
-        if(macd>prevMacd){score++;pros.add("MACD растёт — импульс улучшается");}else{score--;cons.add("MACD снижается — импульс ослабевает");}
-        if(r<30){score++;pros.add("RSI ниже 30 — возможна перепроданность, нужен разворотный сигнал");}else if(r>70){score-=2;cons.add("RSI выше 70 — повышен риск перегрева и отката");}else if(r>=50){score++;pros.add("RSI выше 50 — умеренно положительный импульс");}else cons.add("RSI ниже 50 — импульс пока слабый");
-        String verdict=score>=3?"ИНТЕРЕСНА ДЛЯ ДАЛЬНЕЙШЕГО ИЗУЧЕНИЯ":score<=-2?"ПОКА ЛУЧШЕ НЕ СПЕШИТЬ":"НЕЙТРАЛЬНО — ЖДАТЬ ПОДТВЕРЖДЕНИЯ";
-        double entry=p<=s20?p:Math.min(s20,p-0.5*atr);if(entry<=0)entry=p;
+        ArrayList<String> pros=new ArrayList<>(),cons=new ArrayList<>(); int daily=0;
+        if(p>s20){daily+=2;pros.add("цена выше SMA20");}else{daily-=2;cons.add("цена ниже SMA20");}
+        if(s20>s50){daily+=2;pros.add("SMA20 выше SMA50");}else{daily-=2;cons.add("SMA20 ниже SMA50");}
+        if(p>s200){daily+=2;pros.add("цена выше SMA200");}else{daily-=2;cons.add("цена ниже SMA200");}
+        if(macd>prevMacd){daily++;pros.add("MACD растёт");}else{daily--;cons.add("MACD снижается");}
+        double prevR=rsi(new ArrayList<Candle>(a.subList(0,n-1)),14);
+        if(r>=50&&r<=70){daily++;pros.add("RSI в положительной рабочей зоне");}
+        else if(r>75){daily-=2;cons.add("RSI выше 75 — риск перегрева");}
+        else if(r<30&&r>prevR){daily++;pros.add("RSI разворачивается вверх из зоны перепроданности");}
+        else if(r<50){daily--;cons.add("RSI ниже 50 без подтверждённого разворота");}
+        if(avgVol>0&&lastVol>avgVol*1.2&&p>a.get(n-2).close){daily++;pros.add("объём выше среднего при росте цены");}
+        if(resistance>0&&(resistance-p)/p<0.015){daily--;cons.add("близко сопротивление — потенциал ограничен");}
+        int hp=timeframePoints(hourly),mp=timeframePoints(tenMinute);
+        double dNorm=Math.max(0,Math.min(100,50+daily*5.0));
+        double hNorm=hp<0?50:Math.max(0,Math.min(100,50+hp*50.0/6.0));
+        double mNorm=mp<0?50:Math.max(0,Math.min(100,50+mp*50.0/6.0));
+        double quality=dNorm*0.50+hNorm*0.30+mNorm*0.20;
+        boolean aligned=(daily>0&&(hp<0||hp>0)&&(mp<0||mp>0));
+        String verdict=quality>=70&&daily>=2?"СИЛЬНЫЕ УСЛОВИЯ ДЛЯ НАБЛЮДЕНИЯ":quality<35?"СЛАБЫЙ ФОН — НЕ СПЕШИТЬ":"НЕЙТРАЛЬНО — ЖДАТЬ ПОДТВЕРЖДЕНИЯ";
+        double entry=Math.min(p-0.25*atr,Math.max(s20,support)); if(entry<=0||entry>p)entry=p-0.25*atr;
         double stop=Math.max(0,entry-1.5*atr),target=entry+3.0*atr;
+        double riskPct=entry>0?(entry-stop)/entry*100:0, rewardPct=entry>0?(target-entry)/entry*100:0;
         StringBuilder b=new StringBuilder();
-        b.append("ВЫВОД: ").append(verdict).append("\\nОценка модели: ").append(score).append(" баллов. Это фильтр технических условий, не гарантия доходности.\\n\\n");
-        b.append("ТЕКУЩИЕ ПОКАЗАТЕЛИ\\nЦена: ").append(fmt(p)).append(" ₽\\nSMA20: ").append(fmt(s20)).append(" ₽\\nSMA50: ").append(fmt(s50)).append(" ₽\\n");
-        if(!Double.isNaN(s200))b.append("SMA200: ").append(fmt(s200)).append(" ₽\\n");
-        b.append("RSI(14): ").append(fmt(r)).append("\\nMACD (EMA12−EMA26): ").append(fmt(macd)).append("\\nATR(14): ").append(fmt(atr)).append(" ₽\\n");
-        b.append("Поддержка за 20 сессий: ").append(fmt(support)).append(" ₽\\nСопротивление за 20 сессий: ").append(fmt(resistance)).append(" ₽\\n");
-        if(avgVol>0)b.append("Объём последней сессии / средний объём: ").append(fmt(lastVol)).append(" / ").append(fmt(avgVol)).append("\\n");
-        b.append("\\nЧТО ГОВОРЯТ ИНДИКАТОРЫ\\n");for(String x:pros)b.append("＋ ").append(x).append("\\n");for(String x:cons)b.append("− ").append(x).append("\\n");
-        b.append("\\nПЛАН ДЛЯ НАБЛЮДЕНИЯ (не приказ на сделку)\\nЗона возможного входа: около ").append(fmt(entry)).append(" ₽\\nУсловный стоп: ").append(fmt(stop)).append(" ₽\\nУсловная цель: ").append(fmt(target)).append(" ₽\\nРиск на акцию: ").append(fmt(entry-stop)).append(" ₽; потенциал: ").append(fmt(target-entry)).append(" ₽ (ориентир 1:2).\\n");
-        b.append("\\nДЕЙСТВИЕ: ").append(score>=3?"не покупать по одному сигналу; дождаться удержания цены выше зоны входа и проверить ликвидность/новости.":score<=-2?"не открывать новую позицию до улучшения тренда; если акция уже в портфеле — проверить заранее заданный риск и стоп.":"добавить в наблюдение и ждать совпадения тренда, RSI и уровня поддержки.");
-        b.append("\\n\\nДанные: дневные свечи MOEX ISS, ").append(a.get(0).date).append(" — ").append(a.get(n-1).date).append(". Без учёта комиссий, проскальзывания, дивидендов и налогов.");
+        b.append("ВЫВОД: ").append(verdict).append("\\nКачество условий: ").append(fmt(quality)).append("/100 (не вероятность прибыли).\\n");
+        b.append("Веса: дневной 50%, часовой 30%, 10 минут 20%. Совпадение направлений: ").append(aligned?"да":"не подтверждено / часть данных отсутствует").append(".\\n");
+        b.append("ДНЕВНЫЕ ПОКАЗАТЕЛИ\\nЦена: ").append(fmt(p)).append(" ₽; SMA20: ").append(fmt(s20)).append("; SMA50: ").append(fmt(s50)).append("; SMA200: ").append(fmt(s200)).append("\\n");
+        b.append("RSI14: ").append(fmt(r)).append("; MACD: ").append(fmt(macd)).append("; ATR14: ").append(fmt(atr)).append(" ₽\\n");
+        b.append("Поддержка: ").append(fmt(support)).append(" ₽; сопротивление: ").append(fmt(resistance)).append(" ₽\\n");
+        b.append("Оценка дневного тренда: ").append(fmt(dNorm)).append("/100; часового: ").append(hp<0?"нет данных":fmt(hNorm)+"/100").append("; 10-минутного: ").append(mp<0?"нет данных":fmt(mNorm)+"/100").append(".\\n");
+        if(avgVol>0)b.append("Объём последней сессии / средний: ").append(fmt(lastVol)).append(" / ").append(fmt(avgVol)).append("\\n");
+        b.append("\\nПОДТВЕРЖДЕНИЯ\\n");for(String x:pros)b.append("＋ ").append(x).append("\\n");for(String x:cons)b.append("− ").append(x).append("\\n");
+        b.append("\\nПЛАН (ориентир, не приказ)\\nЗона входа: ").append(fmt(entry)).append(" ₽; стоп: ").append(fmt(stop)).append(" ₽; цель: ").append(fmt(target)).append(" ₽\\n");
+        b.append("Риск: ").append(fmt(riskPct)).append("%; потенциал: ").append(fmt(rewardPct)).append("%; R/R 1:2.\\n");
+        b.append("Сценарий отменяется, если дневная цена закрытия ниже поддержки или MACD/тренд ухудшаются. Перед сделкой проверить ликвидность, спред, новости и размер позиции.");
+        b.append("\\n\\nДанные MOEX ISS: ").append(a.get(0).date).append(" — ").append(a.get(n-1).date).append(". Часовой свечей: ").append(hourly==null?0:hourly.size()).append("; 10-минутных: ").append(tenMinute==null?0:tenMinute.size()).append(". Издержки и налоги не включены.");
         return b.toString();
     }
     private String fmt(double v){return Double.isNaN(v)?"н/д":String.format(Locale.US,"%.2f",v);}
@@ -519,8 +543,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 11', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.7.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 12', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.8.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
