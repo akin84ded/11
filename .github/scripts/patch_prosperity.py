@@ -384,7 +384,7 @@ public class MainActivity extends Activity {
                 for(int i=0;i<rows.length();i++){JSONArray r=rows.getJSONArray(i);if(ci<0||r.isNull(ci))continue;Candle x=new Candle();x.close=r.optDouble(ci);x.high=hi>=0?r.optDouble(hi):x.close;x.low=lo>=0?r.optDouble(lo):x.close;x.open=oi>=0?r.optDouble(oi):x.close;x.volume=vi>=0?r.optDouble(vi):0;x.date=di>=0?r.optString(di):"";if(x.close>0)candles.add(x);}
                 final String report=buildAnalysis(stock,candles);
                 runOnUiThread(()->{status.setText("Анализ "+stock.ticker+" готов. История: "+candles.size()+" дневных свечей.");new AlertDialog.Builder(this).setTitle("Аналитика: "+stock.ticker).setMessage(report).setPositiveButton("Понятно",null).show();});
-            } catch(Exception e){runOnUiThread(()->{status.setText("Не удалось получить историю "+stock.ticker);new AlertDialog.Builder(this).setTitle("Анализ недоступен").setMessage(e.getMessage()+"\\nПроверьте доступ к MOEX и повторите попытку.").setPositiveButton("OK",null).show();});}
+            } catch(Exception e){runOnUiThread(()->{status.setText("Не удалось получить историю "+stock.ticker);new AlertDialog.Builder(this).setTitle("Анализ недоступен").setMessage(e.getMessage()+"\nПроверьте доступ к MOEX и повторите попытку.").setPositiveButton("OK",null).show();});}
         });
     }
     private double sma(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double sum=0;for(int i=end-period;i<end;i++)sum+=a.get(i).close;return sum/period;}
