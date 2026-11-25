@@ -20,6 +20,8 @@ import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
+import android.text.TextWatcher;
+import android.text.Editable;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import androidx.core.app.ActivityCompat;
@@ -43,7 +45,8 @@ public class MainActivity extends Activity {
     private LinearLayout list, root, analytics, watchList, portfolioList;
     private final ArrayList<Candidate> candidates = new ArrayList<>();
     private final ArrayList<Holding> holdings = new ArrayList<>();
-    private EditText search;
+    private AutoCompleteTextView search;
+    private ArrayAdapter<String> searchAdapter;
     private TextView status;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ArrayList<Stock> stocks = new ArrayList<>();
@@ -100,7 +103,8 @@ public class MainActivity extends Activity {
         root.addView(text("Процветание", 28, true));
         root.addView(text("Акции • котировки MOEX • заметки без сервера", 14, false));
         LinearLayout bar = new LinearLayout(this); bar.setOrientation(LinearLayout.HORIZONTAL);
-        search = new EditText(this); search.setSingleLine(true); search.setHint("Тикер или название, например SBER");
+        search = new AutoCompleteTextView(this); search.setSingleLine(true); search.setThreshold(1); search.setCompletionHint("Выберите инструмент по тикеру или названию"); search.setHint("Начните вводить тикер или название, например Сбербанк");
+        search.setOnItemClickListener((parent,view,position,id) -> { String choice=(String)parent.getItemAtPosition(position); int sep=choice.indexOf(" — "); String ticker=sep>0?choice.substring(0,sep):choice; search.setText(ticker); search.setSelection(ticker.length()); render(ticker); });
         bar.addView(search, new LinearLayout.LayoutParams(0,dp(52),1));
         Button find = new Button(this); find.setText("Найти"); bar.addView(find);
         root.addView(bar);
@@ -196,9 +200,17 @@ public class MainActivity extends Activity {
                 stocks.add(new Stock(ticker,name,number(p),number(ch),pct));
             }
             stocks.sort((a,b)->a.ticker.compareTo(b.ticker));
+            updateSearchSuggestions();
             renderAnalytics();
             renderPlans();
         } catch(Exception ignored) {}
+    }
+    private void updateSearchSuggestions() {
+        if(search==null)return;
+        ArrayList<String> options=new ArrayList<>();
+        for(Stock st:stocks) options.add(st.ticker+" — "+st.name);
+        searchAdapter=new ArrayAdapter<>(this,android.R.layout.simple_dropdown_item_1line,options);
+        search.setAdapter(searchAdapter);
     }
     private int column(JSONArray a,String name) { for(int i=0;i<a.length();i++) if(name.equals(a.optString(i)))return i; return -1; }
     private String number(Object x) {
@@ -358,34 +370,78 @@ public class MainActivity extends Activity {
     }
 
     private static class Candle { double open,high,low,close,volume; String date; }
+    private ArrayList<Candle> fetchCandles(Stock stock,int interval,int days) throws Exception {
+        Calendar cal=Calendar.getInstance(); cal.add(Calendar.DAY_OF_YEAR,-days);
+        String from=String.format(Locale.US,"%tF",cal);
+        ArrayList<Candle> result=new ArrayList<>();
+        for(int page=0;page<10;page++) {
+            String path="/iss/engines/stock/markets/shares/securities/"+URLEncoder.encode(stock.ticker,"UTF-8")+"/candles.json?from="+from+"&interval="+interval+"&start="+(page*500);
+            JSONObject data=null; Exception last=null;
+            for(String scheme:new String[]{"http","https"}) {
+                HttpURLConnection c=null;
+                try {
+                    c=(HttpURLConnection)new URL(scheme+"://iss.moex.com"+path).openConnection();
+                    c.setConnectTimeout(12000);c.setReadTimeout(25000);c.setRequestProperty("User-Agent","Prosperity-Android/1.0");
+                    if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
+                    ByteArrayOutputStream out=new ByteArrayOutputStream();
+                    try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);}
+                    data=new JSONObject(new String(out.toByteArray(),StandardCharsets.UTF_8));break;
+                } catch(Exception e){last=e;} finally {if(c!=null)c.disconnect();}
+            }
+            if(data==null) {
+                if(page==0)throw new IOException("Не удалось получить свечи интервала "+interval+": "+(last==null?"нет ответа":last.getMessage()));
+                break;
+            }
+            JSONObject block=data.getJSONObject("candles"); JSONArray cols=block.getJSONArray("columns"),rows=block.getJSONArray("data");
+            int ci=column(cols,"close"),hi=column(cols,"high"),lo=column(cols,"low"),oi=column(cols,"open"),vi=column(cols,"volume"),di=column(cols,"begin");
+            if(ci<0)throw new IOException("В ответе MOEX нет поля close");
+            for(int i=0;i<rows.length();i++) {
+                JSONArray r=rows.getJSONArray(i);if(r.isNull(ci))continue;
+                Candle x=new Candle();x.close=r.optDouble(ci);x.high=hi>=0?r.optDouble(hi):x.close;x.low=lo>=0?r.optDouble(lo):x.close;
+                x.open=oi>=0?r.optDouble(oi):x.close;x.volume=vi>=0?r.optDouble(vi):0;x.date=di>=0?r.optString(di):"";
+                if(x.close>0)result.add(x);
+            }
+            if(rows.length()<500)break;
+        }
+        return result;
+    }
     private void analyzeStock(Stock stock) {
-        status.setText("Загружаю дневную историю " + stock.ticker + " для анализа…");
+        status.setText("Загружаю дневную, часовую и 10-минутную историю "+stock.ticker+"…");
         io.execute(() -> {
             try {
-                Calendar cal=Calendar.getInstance(); cal.add(Calendar.DAY_OF_YEAR,-420);
-                String from=String.format(Locale.US,"%tF",cal);
-                String path="/iss/engines/stock/markets/shares/securities/"+URLEncoder.encode(stock.ticker,"UTF-8")+"/candles.json?from="+from+"&interval=24&start=0";
-                JSONObject data=null; Exception last=null;
-                for(String scheme:new String[]{"http","https"}) {
-                    HttpURLConnection c=null;
-                    try {
-                        c=(HttpURLConnection)new URL(scheme+"://iss.moex.com"+path).openConnection();
-                        c.setConnectTimeout(12000);c.setReadTimeout(20000);c.setRequestProperty("User-Agent","Prosperity-Android/1.0");
-                        if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
-                        ByteArrayOutputStream out=new ByteArrayOutputStream();
-                        try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);}
-                        data=new JSONObject(new String(out.toByteArray(),StandardCharsets.UTF_8));break;
-                    } catch(Exception e){last=e;} finally {if(c!=null)c.disconnect();}
-                }
-                if(data==null)throw new IOException("Не удалось получить историю: "+(last==null?"нет ответа":last.getMessage()));
-                JSONObject block=data.getJSONObject("candles");JSONArray cols=block.getJSONArray("columns"),rows=block.getJSONArray("data");
-                int ci=column(cols,"close"),hi=column(cols,"high"),lo=column(cols,"low"),oi=column(cols,"open"),vi=column(cols,"volume"),di=column(cols,"begin");
-                ArrayList<Candle> candles=new ArrayList<>();
-                for(int i=0;i<rows.length();i++){JSONArray r=rows.getJSONArray(i);if(ci<0||r.isNull(ci))continue;Candle x=new Candle();x.close=r.optDouble(ci);x.high=hi>=0?r.optDouble(hi):x.close;x.low=lo>=0?r.optDouble(lo):x.close;x.open=oi>=0?r.optDouble(oi):x.close;x.volume=vi>=0?r.optDouble(vi):0;x.date=di>=0?r.optString(di):"";if(x.close>0)candles.add(x);}
-                final String report=buildAnalysis(stock,candles);
-                runOnUiThread(()->{status.setText("Анализ "+stock.ticker+" готов. История: "+candles.size()+" дневных свечей.");new AlertDialog.Builder(this).setTitle("Аналитика: "+stock.ticker).setMessage(report).setPositiveButton("Понятно",null).show();});
+                ArrayList<Candle> daily=fetchCandles(stock,24,420);
+                ArrayList<Candle> hourly=null,tenMinute=null;
+                String hourlyError="",tenError="";
+                try{hourly=fetchCandles(stock,60,120);}catch(Exception e){hourlyError=e.getMessage();}
+                try{tenMinute=fetchCandles(stock,10,30);}catch(Exception e){tenError=e.getMessage();}
+                final ArrayList<Candle> h=hourly, m=tenMinute;
+                StringBuilder report=new StringBuilder(buildAnalysis(stock,daily));
+                report.append("\n\n=== СРЕДНЕСРОЧНАЯ КАРТИНА: 1 ЧАС ===\n");
+                report.append(h==null?"Часовые данные временно недоступны: "+hourlyError:buildTimeframeSummary(h,"часовой график"));
+                report.append("\n\n=== КРАТКОСРОЧНАЯ КАРТИНА: 10 МИНУТ ===\n");
+                report.append(m==null?"10-минутные данные временно недоступны: "+tenError:buildTimeframeSummary(m,"10-минутный график"));
+                report.append("\n\nКАК ЧИТАТЬ СОВМЕСТНЫЙ СИГНАЛ\nДневной график показывает основной тренд, часовой — состояние движения внутри нескольких торговых сессий, 10-минутный — краткосрочный импульс и возможную точку входа. Наиболее согласованный сценарий — когда направления всех трёх периодов совпадают. Если периоды противоречат друг другу, это признак неопределённости: лучше дождаться подтверждения. Внутридневные колебания шумнее дневных и не должны перевешивать долгосрочную картину.");
+                final String result=report.toString();
+                runOnUiThread(()->{status.setText("Мультиинтервальный анализ "+stock.ticker+" готов. Дневных свечей: "+daily.size()+", часовых: "+(h==null?0:h.size())+", 10-минутных: "+(m==null?0:m.size())+".");new AlertDialog.Builder(this).setTitle("Аналитика: "+stock.ticker).setMessage(result).setPositiveButton("Понятно",null).show();});
             } catch(Exception e){runOnUiThread(()->{status.setText("Не удалось получить историю "+stock.ticker);new AlertDialog.Builder(this).setTitle("Анализ недоступен").setMessage(e.getMessage()+"\nПроверьте доступ к MOEX и повторите попытку.").setPositiveButton("OK",null).show();});}
         });
+    }
+    private String buildTimeframeSummary(ArrayList<Candle> a,String label) {
+        if(a==null||a.size()<20)return "Недостаточно истории для расчёта (нужно минимум 20 свечей, получено "+(a==null?0:a.size())+").";
+        int n=a.size();double p=a.get(n-1).close,s20=sma(a,n,20),change5=(p/a.get(Math.max(0,n-6)).close-1)*100.0;
+        double strength=a.size()>14?rsi(a,14):Double.NaN;
+        String direction=p>s20&&change5>0?"восходящее":p<s20&&change5<0?"нисходящее":"боковое / смешанное";
+        StringBuilder b=new StringBuilder();
+        b.append("Свечей: ").append(n).append("; период данных: ").append(a.get(0).date).append(" — ").append(a.get(n-1).date).append(".\n");
+        b.append("Последняя цена закрытия свечи: ").append(fmt(p)).append(" ₽. SMA20: ").append(fmt(s20)).append(" ₽. Изменение за последние 5 свечей: ").append(fmt(change5)).append("%.\n");
+        b.append("Оценка направления: ").append(direction).append(". ");
+        if(p>s20)b.append("Цена выше средней за 20 свечей — локальный фон положительный. ");
+        else b.append("Цена ниже средней за 20 свечей — локальный фон слабый. ");
+        if(change5>0)b.append("Последние свечи показывают положительный импульс. ");
+        else if(change5<0)b.append("Последние свечи показывают отрицательный импульс. ");
+        else b.append("За последние свечи выраженного изменения нет. ");
+        if(!Double.isNaN(strength)){b.append("RSI(14): ").append(fmt(strength)).append(" — ");if(strength<30)b.append("зона возможной перепроданности; нужен разворот вверх.");else if(strength>70)b.append("зона перегрева; возможен откат.");else if(strength>=50)b.append("импульс умеренно положительный.");else b.append("импульс пока слабый.");}
+        return b.toString();
     }
     private double sma(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double sum=0;for(int i=end-period;i<end;i++)sum+=a.get(i).close;return sum/period;}
     private double ema(ArrayList<Candle> a,int end,int period) {if(end<period)return Double.NaN;double v=0;for(int i=end-period;i<end;i++)v+=a.get(i).close;v/=period;double k=2.0/(period+1);for(int i=end;i<a.size();i++)v=a.get(i).close*k+v*(1-k);return v;}
@@ -463,8 +519,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 10', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.6.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 11', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.7.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
