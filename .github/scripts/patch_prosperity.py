@@ -422,7 +422,8 @@ public class MainActivity extends Activity {
         return b.toString();
     }
     private String fmt(double v){return Double.isNaN(v)?"н/д":String.format(Locale.US,"%.2f",v);}
-\n    private void editNote(Stock s,TextView view,Button button) {
+
+    private void editNote(Stock s,TextView view,Button button) {
         EditText input=new EditText(this); input.setMinLines(3); input.setGravity(Gravity.TOP);
         input.setText(prefs.getString("note_"+s.ticker,""));
         new AlertDialog.Builder(this).setTitle("Заметка: "+s.ticker).setView(input)
