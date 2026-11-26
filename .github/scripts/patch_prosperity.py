@@ -148,7 +148,7 @@ public class MainActivity extends Activity {
         String raw = prefs.getString(CACHE, "");
         if (!raw.isEmpty()) {
             try { parseQuotes(new JSONObject(raw)); render(""); status.setText("Показаны сохранённые котировки. Проверяю обновления…"); }
-            catch (Exception ignored) { status.setText("Нет сохранённых котировок. Подключитесь к интернету для первой загрузки."); }
+            catch (Exception cacheError) { status.setText("Кэш котировок повреждён или имеет неизвестный формат. Попробуйте обновить данные. ("+cacheError.getMessage()+")"); }
         } else status.setText("Для первой загрузки котировок нужен интернет. Затем данные будут доступны офлайн.");
     }
 
@@ -185,23 +185,24 @@ public class MainActivity extends Activity {
                 if (data == null) throw new IOException("HTTPS MOEX недоступен: "+(lastError==null?"неизвестная ошибка":lastError.getMessage()));
                 final JSONObject result = data;
                 prefs.edit().putString(CACHE,result.toString()).putLong("updated",System.currentTimeMillis()).apply();
-                runOnUiThread(() -> { parseQuotes(result); render(search.getText().toString()); status.setText("Котировки MOEX обновлены: "+stocks.size()+" инструментов. Кэш сохранён на устройстве."); });
+                runOnUiThread(() -> { try { parseQuotes(result); render(search.getText().toString()); status.setText("Котировки MOEX обновлены: "+stocks.size()+" инструментов. Кэш сохранён на устройстве."); } catch(Exception parseError) { status.setText("MOEX ответила, но котировки не удалось обработать. Старые данные не заменены. ("+parseError.getMessage()+")"); new AlertDialog.Builder(this).setTitle("Ошибка данных MOEX").setMessage(parseError.getMessage()).setPositiveButton("OK",null).show(); } });
             } catch(Exception ex) {
-                runOnUiThread(() -> status.setText("Нет соединения с MOEX. Кэш сохранён. Проверены порты 80 и 443. ("+ex.getMessage()+")"));
+                runOnUiThread(() -> status.setText("Не удалось подключиться к MOEX по HTTPS. Проверьте интернет, VPN, дату и время устройства. Сохранённые данные не удалены. ("+ex.getMessage()+")"));
             } finally { if(c!=null)c.disconnect(); }
         });
     }
 
     private void parseQuotes(JSONObject data) {
-        stocks.clear();
         try {
             JSONObject sec = data.getJSONObject("securities"), md = data.getJSONObject("marketdata");
             JSONArray sCols=sec.getJSONArray("columns"), sData=sec.getJSONArray("data");
             JSONArray mCols=md.getJSONArray("columns"), mData=md.getJSONArray("data");
-            int ti=sCols.toString().indexOf("\"SECID\""); int ni=sCols.toString().indexOf("\"SHORTNAME\"");
-            int mi=mCols.toString().indexOf("\"SECID\""); int pi=mCols.toString().indexOf("\"LAST\""); int ci=mCols.toString().indexOf("\"CHANGE\"");            ti=column(sCols,"SECID"); ni=column(sCols,"SHORTNAME"); mi=column(mCols,"SECID"); pi=column(mCols,"LAST"); ci=column(mCols,"CHANGE");
+            int ti=column(sCols,"SECID"), ni=column(sCols,"SHORTNAME");
+            int mi=column(mCols,"SECID"), pi=column(mCols,"LAST"), ci=column(mCols,"CHANGE");
+            if(ti<0||ni<0||mi<0||pi<0||ci<0) throw new IOException("MOEX вернула неполный набор колонок SECID/SHORTNAME/LAST/CHANGE");
             HashMap<String,JSONArray> prices=new HashMap<>();
             for(int i=0;i<mData.length();i++){ JSONArray r=mData.optJSONArray(i); if(r!=null) prices.put(r.optString(mi),r); }
+            ArrayList<Stock> parsed=new ArrayList<>();
             for(int i=0;i<sData.length();i++){
                 JSONArray r=sData.optJSONArray(i); if(r==null)continue;
                 String ticker=r.optString(ti,""), name=r.optString(ni,ticker);
@@ -209,13 +210,17 @@ public class MainActivity extends Activity {
                 JSONArray q=prices.get(ticker); Object p=q==null?null:q.opt(pi), ch=q==null?null:q.opt(ci);
                 double pct = Double.NaN;
                 try { if(p!=null && p!=JSONObject.NULL && ch!=null && ch!=JSONObject.NULL) { double last=Double.parseDouble(p.toString()), delta=Double.parseDouble(ch.toString()); double prev=last-delta; if(prev>0) pct=(delta/prev)*100.0; } } catch(Exception ignored) {}
-                stocks.add(new Stock(ticker,name,number(p),number(ch),pct));
+                parsed.add(new Stock(ticker,name,number(p),number(ch),pct));
             }
-            stocks.sort((a,b)->a.ticker.compareTo(b.ticker));
+            if(parsed.isEmpty()) throw new IOException("MOEX вернула пустой список инструментов. Проверьте доступность ISS и параметры запроса.");
+            parsed.sort((a,b)->a.ticker.compareTo(b.ticker));
+            stocks.clear(); stocks.addAll(parsed);
             updateSearchSuggestions();
             renderAnalytics();
             renderPlans();
-        } catch(Exception ignored) {}
+        } catch(Exception e) {
+            throw new IllegalArgumentException("Не удалось разобрать ответ MOEX: "+e.getMessage(),e);
+        }
     }
     private void updateSearchSuggestions() {
         if(search==null)return;
@@ -669,8 +674,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 15', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.11.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 16', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.12.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
