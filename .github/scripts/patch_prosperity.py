@@ -791,7 +791,6 @@ public class PriceMonitorWorker extends Worker {
     private String fmt(double value) { return String.format(Locale.US,"%.2f",value); }
 }
 ''', encoding="utf-8")
-, r'\\1\\2 = \\3', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
