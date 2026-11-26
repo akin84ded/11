@@ -678,8 +678,6 @@ if gradle.exists():
     g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.12.1"', g)
     # Use assignment syntax for Android DSL properties (Gradle 10 compatibility).
     g = re.sub(r'(?m)^(\s*)(namespace|compileSdk|minSdk|targetSdk)\s+([^\n]+)$', r'\1\2 = \3', g)
-    g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
-    gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
 worker.write_text(r'''package ru.mos2.app;
 
