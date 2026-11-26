@@ -690,7 +690,8 @@ public class PriceMonitorWorker extends Worker {
         Context context=getApplicationContext();
         if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) return;
         NotificationManager manager=(NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if(manager==null||!manager.areNotificationsEnabled()) return;
+        if(manager==null) return;
+        if(Build.VERSION.SDK_INT>=24&&!manager.areNotificationsEnabled()) return;
         String channel="prosperity_market_alerts";
         if(Build.VERSION.SDK_INT>=26) {
             NotificationChannel ch=new NotificationChannel(channel,"Сигналы по портфелю",NotificationManager.IMPORTANCE_DEFAULT);
