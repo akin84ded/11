@@ -109,20 +109,20 @@ jobs:
           test -s "$APP_DIR/prosperity-upload.jks"
           cat >> "$APP_GRADLE" <<'GRADLE'
 
-android {
-    signingConfigs {
-        release {
-            storeFile file("prosperity-upload.jks")
-            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
-            keyAlias System.getenv("ANDROID_KEY_ALIAS")
-            keyPassword System.getenv("ANDROID_KEY_PASSWORD")
-        }
-    }
-    buildTypes {
-        release { signingConfig signingConfigs.release }
-    }
-}
-GRADLE
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file("prosperity-upload.jks")
+                      storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                      keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+                  }
+              }
+              buildTypes {
+                  release { signingConfig signingConfigs.release }
+              }
+          }
+          GRADLE
           echo "Persistent release signing configured." | tee signing-status.txt
       - name: Build debug APK when a Gradle project is present
         shell: bash
