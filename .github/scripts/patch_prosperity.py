@@ -287,11 +287,11 @@ public class MainActivity extends Activity {
     private void loadPlans() {
         try {
             JSONArray a=new JSONArray(prefs.getString("candidates","[]"));
-            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Candidate c=new Candidate(o.getString("ticker"),o.optDouble("entry"),o.optDouble("stop"),o.optDouble("target"),o.optString("period","Среднесрочный"));c.score=o.optInt("score",0);c.recommendation=o.optString("recommendation","Не оценено");candidates.add(c);}
+            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Candidate c=new Candidate(o.getString("ticker"),o.optDouble("entry"),o.optDouble("stop"),o.optDouble("target"),o.optString("period","Среднесрочный"));if(c.entry>0&&c.stop<=0)c.stop=c.entry*0.92;if(c.entry>0&&c.target<=0)c.target=c.entry*1.16;c.score=o.optInt("score",0);c.recommendation=o.optString("recommendation","Не оценено");candidates.add(c);}
         } catch(Exception ignored) {}
         try {
             JSONArray a=new JSONArray(prefs.getString("holdings","[]"));
-            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);holdings.add(new Holding(o.getString("ticker"),o.optDouble("quantity"),o.optDouble("buy"),o.optDouble("stop"),o.optDouble("target")));}
+            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Holding x=new Holding(o.getString("ticker"),o.optDouble("quantity"),o.optDouble("buy"),o.optDouble("stop"),o.optDouble("target"));if(x.buy>0&&x.stop<=0)x.stop=x.buy*0.92;if(x.buy>0&&x.target<=0)x.target=x.buy*1.16;holdings.add(x);}
         } catch(Exception ignored) {}
     }
     private void savePlans() {
