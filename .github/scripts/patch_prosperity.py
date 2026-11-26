@@ -293,6 +293,8 @@ public class MainActivity extends Activity {
             JSONArray a=new JSONArray(prefs.getString("holdings","[]"));
             for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Holding x=new Holding(o.getString("ticker"),o.optDouble("quantity"),o.optDouble("buy"),o.optDouble("stop"),o.optDouble("target"));if(x.buy>0&&x.stop<=0)x.stop=x.buy*0.92;if(x.buy>0&&x.target<=0)x.target=x.buy*1.16;holdings.add(x);}
         } catch(Exception ignored) {}
+        // Сохраняем нормализованные уровни старых записей.
+        savePlans();
     }
     private void savePlans() {
         try {
@@ -342,13 +344,17 @@ public class MainActivity extends Activity {
         if(watchList==null||portfolioList==null)return;
         watchList.removeAllViews();portfolioList.removeAllViews();
         if(candidates.isEmpty())watchList.addView(text("Кандидатов пока нет. Добавьте тикер и плановую цену входа.",14,false));
-        for(Candidate c:new ArrayList<>(candidates)){
+        ArrayList<Candidate> rankedCandidates=new ArrayList<>(candidates);
+        rankedCandidates.sort((a,b)->Integer.compare(b.score,a.score));
+        int candidateRank=0;
+        for(Candidate c:rankedCandidates){
+            candidateRank++;
             double p=current(c.ticker);String signal=Double.isNaN(p)?"Нет котировки":p<=c.entry?"Цена входа достигнута или ниже": "Ожидание входа";
             if(c.stop>0&&!Double.isNaN(p)&&p<=c.stop)signal="Стоп-уровень достигнут";
             if(c.target>0&&!Double.isNaN(p)&&p>=c.target)signal="Цель достигнута";
             LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(10),dp(6),dp(10),dp(6));card.setBackgroundColor(0xffffffff);watchList.addView(card);
-            card.addView(text(c.ticker+" • текущая цена: "+(Double.isNaN(p)?"—":number(p)),16,true));
-            card.addView(text("Период: "+c.period+" • Оценка: "+c.score+"/6",13,false));
+            card.addView(text(candidateRank+". "+c.ticker+" • текущая цена: "+(Double.isNaN(p)?"—":number(p)),16,true));
+            card.addView(text("Период: "+c.period+" • Оценка тренда: "+c.score+"/6",13,false));
             card.addView(text("Вход: "+number(c.entry)+" ₽ • Стоп: "+number(c.stop)+" ₽ • Цель: "+number(c.target)+" ₽",13,false));
             card.addView(text("Рекомендация: "+c.recommendation+" • Сигнал цены: "+signal,14,true));
             Button evaluate=new Button(this);evaluate.setText("Оценить по выбранному периоду");card.addView(evaluate);evaluate.setOnClickListener(v->analyzeCandidate(c));
@@ -356,12 +362,13 @@ public class MainActivity extends Activity {
             edit.setOnClickListener(v->candidateDialog(c));del.setOnClickListener(v->{candidates.remove(c);savePlans();renderPlans();});
         }
         if(holdings.isEmpty())portfolioList.addView(text("Портфель пуст. Добавьте фактически купленные акции.",14,false));
-        double totalCost=0,totalValue=0;
+        double totalCost=0,totalValue=0,totalRiskCash=0;
         for(Holding h:new ArrayList<>(holdings)){
             double p=current(h.ticker);double cost=h.quantity*h.buy;totalCost+=cost;
             String currentText=Double.isNaN(p)?"—":number(p)+" ₽";
             String pnl=Double.isNaN(p)?"Нет котировки":String.format(Locale.US,"%+.2f ₽ (%+.2f%%)",(p-h.buy)*h.quantity,(p-h.buy)/h.buy*100);
             if(!Double.isNaN(p))totalValue+=p*h.quantity;
+            if(h.stop>0)totalRiskCash+=Math.max(0,h.buy-h.stop)*h.quantity;
             String signal="Держать под наблюдением";
             if(!Double.isNaN(p)&&h.stop>0&&p<=h.stop)signal="Уровень стоп-выхода достигнут";
             else if(!Double.isNaN(p)&&h.target>0&&p>=h.target)signal="Целевая цена выхода достигнута";
@@ -371,12 +378,18 @@ public class MainActivity extends Activity {
             card.addView(text("Стоимость покупки: "+number(cost)+" ₽ • Результат: "+pnl,13,false));
             if(h.stop<=0)h.stop=h.buy*0.92;if(h.target<=0)h.target=h.buy*1.16;
             card.addView(text("Стоп-цена: "+number(h.stop)+" ₽ • Цель: "+number(h.target)+" ₽",13,true));
-            card.addView(text("Уровни по умолчанию: −8% риск / +16% цель от цены покупки. Уточните их техническим анализом.",11,false));
+            double riskPct=h.buy>0?(h.buy-h.stop)/h.buy*100.0:0;
+            double riskMoney=Math.max(0,h.buy-h.stop)*h.quantity;
+            card.addView(text("Риск до стопа: "+number(riskMoney)+" ₽ ("+fmt(riskPct)+"% от цены покупки). Уровни по умолчанию — −8% / +16%; замените их после технической оценки.",11,false));
             card.addView(text("Контроль: "+signal,14,true));
             LinearLayout buttons=new LinearLayout(this);Button edit=new Button(this);edit.setText("Изменить");Button del=new Button(this);del.setText("Удалить");buttons.addView(edit);buttons.addView(del);card.addView(buttons);
             edit.setOnClickListener(v->holdingDialog(h));del.setOnClickListener(v->{holdings.remove(h);savePlans();renderPlans();});
         }
-        if(!holdings.isEmpty())portfolioList.addView(text("Вложено: "+number(totalCost)+" ₽ • Текущая стоимость по доступным котировкам: "+number(totalValue)+" ₽",14,true));
+        if(!holdings.isEmpty()){
+            portfolioList.addView(text("Вложено: "+number(totalCost)+" ₽ • Текущая стоимость по доступным котировкам: "+number(totalValue)+" ₽",14,true));
+            double portfolioRiskPct=totalValue>0?totalRiskCash/totalValue*100.0:0;
+            portfolioList.addView(text("Потенциальный убыток до установленных стопов: "+number(totalRiskCash)+" ₽ ("+fmt(portfolioRiskPct)+"% текущей стоимости портфеля). Это оценка по стопам, не максимальный возможный убыток.",13,true));
+        }
     }
 
     private static class Candle { double open,high,low,close,volume; String date; }
@@ -449,13 +462,15 @@ public class MainActivity extends Activity {
                 double atr=0;for(int i=n-14;i<n;i++){Candle x=a.get(i),pr=a.get(i-1);atr+=Math.max(x.high-x.low,Math.max(Math.abs(x.high-pr.close),Math.abs(x.low-pr.close)));}atr/=14;
                 int score=timeframePoints(a);
                 if(c.period.startsWith("Долго")){score=0;if(p>s20)score+=2;if(s20>s50)score+=2;if(n>=200&&p>sma(a,n,200))score+=2;if(r>75)score-=2;if(r<50)score--;}
-                String rec=score>=4?"ПОКУПАТЬ ПОСЛЕ ПОДТВЕРЖДЕНИЯ":score>=1?"ЖДАТЬ ОТКАТА / ПОДТВЕРЖДЕНИЯ":"НЕ ПОКУПАТЬ — СЛАБЫЙ ТРЕНД";
+                score=Math.max(-6,Math.min(6,score));
                 double entry=p,stop=Math.max(0,p-1.5*atr),target=p+3.0*atr;
+                double risk=entry-stop,reward=target-entry,rr=risk>0?reward/risk:0;
+                String rec=(score>=4&&p>s50&&r<75&&rr>=1.5)?"ПОКУПАТЬ ПОСЛЕ ПОДТВЕРЖДЕНИЯ":(score>=1&&r<80)?"ЖДАТЬ ОТКАТА / ПОДТВЕРЖДЕНИЯ":"НЕ ПОКУПАТЬ — СЛАБЫЙ ТРЕНД ИЛИ ПОВЫШЕННЫЙ РИСК";
                 c.entry=entry;c.stop=stop;c.target=target;c.score=score;c.recommendation=rec;savePlans();
                 String report="Период: "+c.period+"\\nСвечей: "+n+"; данные: "+a.get(0).date+" — "+a.get(n-1).date+
                     "\\nТекущая цена: "+fmt(p)+" ₽\\nSMA20: "+fmt(s20)+" ₽; SMA50: "+fmt(s50)+" ₽; RSI14: "+fmt(r)+
-                    "\\nОценка тренда: "+score+"/6\\nРекомендация: "+rec+"\\n\\nПлан: вход около "+fmt(entry)+" ₽; стоп "+fmt(stop)+" ₽; цель "+fmt(target)+" ₽."+
-                    "\\nРиск/потенциал ориентировочно 1:2. Уровни рассчитаны по ATR выбранного интервала; не являются гарантией результата.";
+                    "\\nОценка тренда: "+score+"/6\\nРиск/потенциал: 1:"+fmt(rr)+"\\nРекомендация: "+rec+"\\n\\nПлан: вход около "+fmt(entry)+" ₽; стоп "+fmt(stop)+" ₽; цель "+fmt(target)+" ₽."+
+                    "\\nУровни рассчитаны по ATR выбранного интервала. Долгосрочный режим использует дневные свечи как приближение, недельная агрегация ещё не реализована. Это сценарная оценка, не гарантия результата.";
                 runOnUiThread(()->{renderPlans();status.setText("Оценка кандидата "+c.ticker+" завершена.");new AlertDialog.Builder(this).setTitle("Рекомендация: "+c.ticker).setMessage(report).setPositiveButton("Понятно",null).show();});
             }catch(Exception e){runOnUiThread(()->{status.setText("Не удалось оценить "+c.ticker);new AlertDialog.Builder(this).setTitle("Анализ недоступен").setMessage(e.getMessage()).setPositiveButton("OK",null).show();});}
         });
