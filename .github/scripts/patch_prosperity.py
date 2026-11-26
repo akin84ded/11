@@ -287,11 +287,11 @@ public class MainActivity extends Activity {
     private void loadPlans() {
         try {
             JSONArray a=new JSONArray(prefs.getString("candidates","[]"));
-            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Candidate c=new Candidate(o.getString("ticker"),o.optDouble("entry"),o.optDouble("stop"),o.optDouble("target"),o.optString("period","Среднесрочный"));if(c.entry>0&&c.stop<=0)c.stop=c.entry*0.92;if(c.entry>0&&c.target<=0)c.target=c.entry*1.16;c.score=o.optInt("score",0);c.recommendation=o.optString("recommendation","Не оценено");candidates.add(c);}
+            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Candidate c=new Candidate(o.getString("ticker"),o.optDouble("entry"),o.optDouble("stop"),o.optDouble("target"),o.optString("period","Среднесрочный"));if(c.entry>0&&(c.stop<=0||c.stop>=c.entry))c.stop=c.entry*0.92;if(c.entry>0&&(c.target<=c.entry))c.target=c.entry*1.16;c.score=o.optInt("score",0);c.recommendation=o.optString("recommendation","Не оценено");candidates.add(c);}
         } catch(Exception ignored) {}
         try {
             JSONArray a=new JSONArray(prefs.getString("holdings","[]"));
-            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Holding x=new Holding(o.getString("ticker"),o.optDouble("quantity"),o.optDouble("buy"),o.optDouble("stop"),o.optDouble("target"));if(x.buy>0&&x.stop<=0)x.stop=x.buy*0.92;if(x.buy>0&&x.target<=0)x.target=x.buy*1.16;holdings.add(x);}
+            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Holding x=new Holding(o.getString("ticker"),o.optDouble("quantity"),o.optDouble("buy"),o.optDouble("stop"),o.optDouble("target"));if(x.buy>0&&(x.stop<=0||x.stop>=x.buy))x.stop=x.buy*0.92;if(x.buy>0&&(x.target<=x.buy))x.target=x.buy*1.16;holdings.add(x);}
         } catch(Exception ignored) {}
         // Сохраняем нормализованные уровни старых записей.
         savePlans();
@@ -320,6 +320,7 @@ public class MainActivity extends Activity {
             if(t.isEmpty()||Double.isNaN(e)||e<=0){Toast.makeText(this,"Укажите тикер и доступную цену входа",Toast.LENGTH_LONG).show();return;}
             Candidate c=new Candidate(t,e,val(stop),val(target),period.getSelectedItem().toString());
             if(c.stop<=0)c.stop=e*0.92;if(c.target<=0)c.target=e*1.16;
+            if(c.stop>=e||c.target<=e){Toast.makeText(this,"Стоп должен быть ниже входа, а цель — выше входа",Toast.LENGTH_LONG).show();return;}
             if(existing!=null)candidates.remove(existing);candidates.add(c);savePlans();renderPlans();
           }).setNegativeButton("Отмена",null).show();
     }
@@ -336,6 +337,7 @@ public class MainActivity extends Activity {
             if(t.isEmpty()||val(qty)<=0||val(buy)<=0){Toast.makeText(this,"Укажите тикер, количество и цену покупки",Toast.LENGTH_LONG).show();return;}
             double b=val(buy),sl=val(stop),tp=val(target);
             if(sl<=0)sl=b*0.92;if(tp<=0)tp=b*1.16;
+            if(sl>=b||tp<=b){Toast.makeText(this,"Стоп должен быть ниже цены покупки, а цель — выше неё",Toast.LENGTH_LONG).show();return;}
             Holding h=new Holding(t,val(qty),b,sl,tp);
             if(existing!=null)holdings.remove(existing);holdings.add(h);savePlans();renderPlans();
           }).setNegativeButton("Отмена",null).show();
@@ -676,7 +678,7 @@ public class PriceMonitorWorker extends Worker {
             Object raw=row.opt(pi);
             if(!(raw instanceof Number)) continue;
             double price=((Number)raw).doubleValue();
-            if(Double.isFinite(price)&&price>0) out.put(ticker,price);
+            if(!Double.isNaN(price)&&!Double.isInfinite(price)&&price>0) out.put(ticker,price);
         }
         return out;
     }
