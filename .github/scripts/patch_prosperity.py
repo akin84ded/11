@@ -148,9 +148,9 @@ public class MainActivity extends Activity {
                 String endpoint = "/iss/engines/stock/markets/shares/securities.json?iss.meta=off&iss.only=securities,marketdata&securities.columns=SECID,SHORTNAME&marketdata.columns=SECID,LAST,CHANGE&limit=1000";
                 JSONObject data = null;
                 Exception lastError = null;
-                // Сначала пробуем HTTP/80: в некоторых сетях исходящий HTTPS/443 заблокирован.
-                // Если HTTP не работает, пробуем обычный HTTPS/443.
-                for (String scheme : new String[]{"http", "https"}) {
+                // Все запросы к MOEX выполняются только по HTTPS.
+                // 
+                for (String scheme : new String[]{"https"}) {
                     try {
                         URL url = new URL(scheme + "://iss.moex.com" + endpoint);
                         c = (HttpURLConnection)url.openConnection();
@@ -170,7 +170,7 @@ public class MainActivity extends Activity {
                         if(c!=null) { c.disconnect(); c=null; }
                     }
                 }
-                if (data == null) throw new IOException("HTTP/80 и HTTPS/443 недоступны: "+(lastError==null?"неизвестная ошибка":lastError.getMessage()));
+                if (data == null) throw new IOException("HTTPS MOEX недоступен: "+(lastError==null?"неизвестная ошибка":lastError.getMessage()));
                 final JSONObject result = data;
                 prefs.edit().putString(CACHE,result.toString()).putLong("updated",System.currentTimeMillis()).apply();
                 runOnUiThread(() -> { parseQuotes(result); render(search.getText().toString()); status.setText("Котировки MOEX обновлены: "+stocks.size()+" инструментов. Кэш сохранён на устройстве."); });
@@ -595,8 +595,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 13', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.9.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 14', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.10.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
