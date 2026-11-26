@@ -16,6 +16,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
 import android.content.SharedPreferences;
+import android.content.Intent;
 import android.graphics.Typeface;
 import android.view.Gravity;
 import android.view.View;
@@ -51,6 +52,8 @@ public class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ArrayList<Stock> stocks = new ArrayList<>();
     private static final String CACHE = "quotes_cache";
+    private static final int REQUEST_EXPORT_BACKUP = 8101;
+    private static final int REQUEST_IMPORT_BACKUP = 8102;
     private static class Stock {
         String ticker, name, price, change;
         double changePct;
@@ -102,6 +105,15 @@ public class MainActivity extends Activity {
         root.setPadding(dp(16),dp(14),dp(16),dp(20)); root.setBackgroundColor(0xfff5f7fa);
         scroll.addView(root); setContentView(scroll);
         root.addView(text("Процветание", 28, true));
+        LinearLayout backupBar = new LinearLayout(this); backupBar.setOrientation(LinearLayout.HORIZONTAL);
+        Button exportBackup = new Button(this); exportBackup.setText("Экспорт данных");
+        Button importBackup = new Button(this); importBackup.setText("Импорт данных");
+        backupBar.addView(exportBackup, new LinearLayout.LayoutParams(0, -2, 1));
+        backupBar.addView(importBackup, new LinearLayout.LayoutParams(0, -2, 1));
+        root.addView(backupBar);
+        root.addView(text("Резервная копия включает портфель, кандидатов, заметки и локальный кэш котировок. Храните файл в безопасном месте.", 12, false));
+        exportBackup.setOnClickListener(v -> chooseBackupExport());
+        importBackup.setOnClickListener(v -> chooseBackupImport());
         root.addView(text("Акции • котировки MOEX • заметки без сервера", 14, false));
         LinearLayout bar = new LinearLayout(this); bar.setOrientation(LinearLayout.HORIZONTAL);
         search = new AutoCompleteTextView(this); search.setSingleLine(true); search.setThreshold(1); search.setCompletionHint("Выберите инструмент по тикеру или названию"); search.setHint("Начните вводить тикер или название, например Сбербанк");
@@ -555,6 +567,68 @@ public class MainActivity extends Activity {
     }
     private String fmt(double v){return Double.isNaN(v)?"н/д":String.format(Locale.US,"%.2f",v);}
 
+    private void chooseBackupExport() {
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE); i.setType("application/json");
+        i.putExtra(Intent.EXTRA_TITLE,"prosperity-backup-"+new java.text.SimpleDateFormat("yyyyMMdd-HHmm",Locale.US).format(new Date())+".json");
+        startActivityForResult(i,REQUEST_EXPORT_BACKUP);
+    }
+    private void chooseBackupImport() {
+        Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE); i.setType("application/json");
+        startActivityForResult(i,REQUEST_IMPORT_BACKUP);
+    }
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data) {
+        super.onActivityResult(requestCode,resultCode,data);
+        if(resultCode!=RESULT_OK||data==null||data.getData()==null)return;
+        android.net.Uri uri=data.getData();
+        if(requestCode==REQUEST_EXPORT_BACKUP) {
+            try {
+                JSONObject backup=new JSONObject(); backup.put("app","ru.mos2.prosperity"); backup.put("schema",1);
+                backup.put("createdAt",System.currentTimeMillis()); backup.put("preferences",new JSONObject(prefs.getAll()));
+                try(OutputStream out=getContentResolver().openOutputStream(uri,"w")) {
+                    if(out==null)throw new IOException("Не удалось открыть файл для записи");
+                    out.write(backup.toString(2).getBytes(StandardCharsets.UTF_8)); out.flush();
+                }
+                Toast.makeText(this,"Резервная копия сохранена",Toast.LENGTH_LONG).show();
+            } catch(Exception e) { Toast.makeText(this,"Ошибка экспорта: "+e.getMessage(),Toast.LENGTH_LONG).show(); }
+        } else if(requestCode==REQUEST_IMPORT_BACKUP) {
+            try {
+                StringBuilder raw=new StringBuilder();
+                try(InputStream in=getContentResolver().openInputStream(uri); BufferedReader reader=new BufferedReader(new InputStreamReader(in,StandardCharsets.UTF_8))) {
+                    if(in==null)throw new IOException("Не удалось открыть файл");
+                    String line; while((line=reader.readLine())!=null)raw.append(line);
+                }
+                JSONObject backup=new JSONObject(raw.toString());
+                if(!"ru.mos2.prosperity".equals(backup.optString("app"))||backup.optInt("schema")!=1)throw new IOException("Файл не является резервной копией Процветания или имеет неподдерживаемый формат");
+                JSONObject values=backup.getJSONObject("preferences");
+                new AlertDialog.Builder(this).setTitle("Восстановить данные?")
+                    .setMessage("Текущие локальные данные будут заменены данными из резервной копии. Перед импортом рекомендуется сохранить текущую копию.")
+                    .setNegativeButton("Отмена",null).setPositiveButton("Восстановить",(dialog,which)->{
+                        try {
+                            SharedPreferences.Editor editor=prefs.edit().clear();
+                            Iterator<String> keys=values.keys();
+                            while(keys.hasNext()) { String key=keys.next(); Object value=values.get(key);
+                                if(value==JSONObject.NULL)continue;
+                                if(value instanceof String)editor.putString(key,(String)value);
+                                else if(value instanceof Boolean)editor.putBoolean(key,(Boolean)value);
+                                else if(value instanceof Number) { double n=((Number)value).doubleValue();
+                                    if(n==Math.rint(n)&&n>=Integer.MIN_VALUE&&n<=Integer.MAX_VALUE)editor.putInt(key,(int)n);
+                                    else if(n==Math.rint(n)&&n>=Long.MIN_VALUE&&n<=Long.MAX_VALUE)editor.putLong(key,(long)n);
+                                    else editor.putFloat(key,(float)n);
+                                }
+                            }
+                            editor.commit(); loadPlansAfterRestore(); showCached(); renderPlans(); render("");
+                            Toast.makeText(this,"Данные восстановлены. Проверьте портфель и заметки.",Toast.LENGTH_LONG).show();
+                        } catch(Exception e) { Toast.makeText(this,"Ошибка восстановления: "+e.getMessage(),Toast.LENGTH_LONG).show(); }
+                    }).show();
+            } catch(Exception e) { Toast.makeText(this,"Не удалось прочитать резервную копию: "+e.getMessage(),Toast.LENGTH_LONG).show(); }
+        }
+    }
+    private void loadPlansAfterRestore() {
+        candidates.clear(); holdings.clear(); loadPlans();
+    }
+
     private void editNote(Stock s,TextView view,Button button) {
         EditText input=new EditText(this); input.setMinLines(3); input.setGravity(Gravity.TOP);
         input.setText(prefs.getString("note_"+s.ticker,""));
@@ -595,8 +669,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 14', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.10.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 15', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.11.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
