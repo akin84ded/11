@@ -17,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -140,16 +140,16 @@ jobs:
             PROJECT_DIR="$(dirname "$WRAPPER")"
             chmod +x "$WRAPPER"
             cd "$PROJECT_DIR"
-            ./gradlew --no-daemon assembleDebug
+            ./gradlew --no-daemon --warning-mode=all --stacktrace assembleDebug
             if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
-              ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}" ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS}" ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD}" ./gradlew --no-daemon assembleRelease
+              ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}" ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS}" ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD}" ./gradlew --no-daemon --warning-mode=all --stacktrace assembleRelease
             fi
           elif [[ -n "$SETTINGS" || -n "$BUILD_FILE" ]]; then
             if [[ -n "$SETTINGS" ]]; then PROJECT_DIR="$(dirname "$SETTINGS")"; else PROJECT_DIR="$(dirname "$BUILD_FILE")"; fi
             cd "$PROJECT_DIR"
-            gradle --no-daemon assembleDebug
+            gradle --no-daemon --warning-mode=all --stacktrace assembleDebug
             if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
-              ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}" ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS}" ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD}" gradle --no-daemon assembleRelease
+              ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}" ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS}" ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD}" gradle --no-daemon --warning-mode=all --stacktrace assembleRelease
             fi
           else
             echo "No Gradle project was found in the uploaded source archive." | tee ../build-status.txt
@@ -175,7 +175,7 @@ jobs:
 
       - name: Upload APK or source diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: mos2-android-build-output
           path: output/
