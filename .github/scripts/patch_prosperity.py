@@ -400,7 +400,7 @@ public class MainActivity extends Activity {
         for(int page=0;page<10;page++) {
             String path="/iss/engines/stock/markets/shares/securities/"+URLEncoder.encode(stock.ticker,"UTF-8")+"/candles.json?from="+from+"&interval="+interval+"&start="+(page*500);
             JSONObject data=null; Exception last=null;
-            for(String scheme:new String[]{"http","https"}) {
+            for(String scheme:new String[]{"https"}) {
                 HttpURLConnection c=null;
                 try {
                     c=(HttpURLConnection)new URL(scheme+"://iss.moex.com"+path).openConnection();
@@ -571,7 +571,7 @@ manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/r
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
@@ -649,7 +649,7 @@ public class PriceMonitorWorker extends Worker {
     private JSONObject download() throws Exception {
         String path="/iss/engines/stock/markets/shares/securities.json?iss.meta=off&iss.only=securities,marketdata&securities.columns=SECID,SHORTNAME&marketdata.columns=SECID,LAST,CHANGE&limit=1000";
         Exception last=null;
-        for(String scheme:new String[]{"http","https"}) {
+        for(String scheme:new String[]{"https"}) {
             HttpURLConnection c=null;
             try {
                 c=(HttpURLConnection)new URL(scheme+"://iss.moex.com"+path).openConnection();
@@ -668,3 +668,42 @@ public class PriceMonitorWorker extends Worker {
         JSONObject md=data.getJSONObject("marketdata"); JSONArray cols=md.getJSONArray("columns"), rows=md.getJSONArray("data");
         int ti=-1,pi=-1;
         for(int i=0;i<cols.length();i++){if("SECID".equals(cols.optString(i)))ti=i;if("LAST".equals(cols.optString(i)))pi=i;}
+        if(ti<0||pi<0) throw new IOException("MOEX response misses SECID/LAST columns");
+        for(int i=0;i<rows.length();i++) {
+            JSONArray row=rows.getJSONArray(i);
+            String ticker=row.optString(ti,"").trim();
+            if(ticker.isEmpty()) continue;
+            Object raw=row.opt(pi);
+            if(!(raw instanceof Number)) continue;
+            double price=((Number)raw).doubleValue();
+            if(Double.isFinite(price)&&price>0) out.put(ticker,price);
+        }
+        return out;
+    }
+
+    private void alert(android.content.SharedPreferences prefs,String ticker,String kind,boolean condition,String message) {
+        String key="alert_"+ticker+"_"+kind;
+        if(!condition) { prefs.edit().putBoolean(key,false).apply(); return; }
+        if(prefs.getBoolean(key,false)) return;
+        Context context=getApplicationContext();
+        if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) return;
+        NotificationManager manager=(NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if(manager==null) return;
+        String channel="prosperity_market_alerts";
+        if(Build.VERSION.SDK_INT>=26) {
+            NotificationChannel ch=new NotificationChannel(channel,"Сигналы по портфелю",NotificationManager.IMPORTANCE_DEFAULT);
+            ch.setDescription("Уведомления о достижении ценовых уровней");
+            manager.createNotificationChannel(ch);
+        }
+        NotificationCompat.Builder notification=new NotificationCompat.Builder(context,channel)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Процветание").setContentText(message)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT).setAutoCancel(true);
+        manager.notify((ticker+"_"+kind).hashCode(),notification.build());
+        prefs.edit().putBoolean(key,true).apply();
+    }
+
+    private String fmt(double value) { return String.format(Locale.US,"%.2f",value); }
+}
+''', encoding="utf-8")
