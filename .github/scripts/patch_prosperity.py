@@ -57,8 +57,9 @@ public class MainActivity extends Activity {
         Stock(String t, String n, String p, String c, double pct) { ticker=t; name=n; price=p; change=c; changePct=pct; }
     }
     private static class Candidate {
-        String ticker; double entry, stop, target;
-        Candidate(String t,double e,double s,double g){ticker=t;entry=e;stop=s;target=g;}
+        String ticker, period, recommendation; double entry, stop, target; int score;
+        Candidate(String t,double e,double s,double g){this(t,e,s,g,"Среднесрочный");}
+        Candidate(String t,double e,double s,double g,String p){ticker=t;entry=e;stop=s;target=g;period=p;recommendation="Не оценено";score=0;}
     }
     private static class Holding {
         String ticker; double quantity,buy,stop,target;
@@ -186,8 +187,7 @@ public class MainActivity extends Activity {
             JSONArray sCols=sec.getJSONArray("columns"), sData=sec.getJSONArray("data");
             JSONArray mCols=md.getJSONArray("columns"), mData=md.getJSONArray("data");
             int ti=sCols.toString().indexOf("\"SECID\""); int ni=sCols.toString().indexOf("\"SHORTNAME\"");
-            int mi=mCols.toString().indexOf("\"SECID\""); int pi=mCols.toString().indexOf("\"LAST\""); int ci=mCols.toString().indexOf("\"CHANGE\"");
-            ti=column(sCols,"SECID"); ni=column(sCols,"SHORTNAME"); mi=column(mCols,"SECID"); pi=column(mCols,"LAST"); ci=column(mCols,"CHANGE");
+            int mi=mCols.toString().indexOf("\"SECID\""); int pi=mCols.toString().indexOf("\"LAST\""); int ci=mCols.toString().indexOf("\"CHANGE\"");            ti=column(sCols,"SECID"); ni=column(sCols,"SHORTNAME"); mi=column(mCols,"SECID"); pi=column(mCols,"LAST"); ci=column(mCols,"CHANGE");
             HashMap<String,JSONArray> prices=new HashMap<>();
             for(int i=0;i<mData.length();i++){ JSONArray r=mData.optJSONArray(i); if(r!=null) prices.put(r.optString(mi),r); }
             for(int i=0;i<sData.length();i++){
@@ -287,7 +287,7 @@ public class MainActivity extends Activity {
     private void loadPlans() {
         try {
             JSONArray a=new JSONArray(prefs.getString("candidates","[]"));
-            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);candidates.add(new Candidate(o.getString("ticker"),o.optDouble("entry"),o.optDouble("stop"),o.optDouble("target")));}
+            for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);Candidate c=new Candidate(o.getString("ticker"),o.optDouble("entry"),o.optDouble("stop"),o.optDouble("target"),o.optString("period","Среднесрочный"));c.score=o.optInt("score",0);c.recommendation=o.optString("recommendation","Не оценено");candidates.add(c);}
         } catch(Exception ignored) {}
         try {
             JSONArray a=new JSONArray(prefs.getString("holdings","[]"));
@@ -297,7 +297,7 @@ public class MainActivity extends Activity {
     private void savePlans() {
         try {
             JSONArray a=new JSONArray();
-            for(Candidate c:candidates){JSONObject o=new JSONObject();o.put("ticker",c.ticker);o.put("entry",c.entry);o.put("stop",c.stop);o.put("target",c.target);a.put(o);}
+            for(Candidate c:candidates){JSONObject o=new JSONObject();o.put("ticker",c.ticker);o.put("entry",c.entry);o.put("stop",c.stop);o.put("target",c.target);o.put("period",c.period);o.put("score",c.score);o.put("recommendation",c.recommendation);a.put(o);}
             JSONArray h=new JSONArray();
             for(Holding x:holdings){JSONObject o=new JSONObject();o.put("ticker",x.ticker);o.put("quantity",x.quantity);o.put("buy",x.buy);o.put("stop",x.stop);o.put("target",x.target);h.put(o);}
             prefs.edit().putString("candidates",a.toString()).putString("holdings",h.toString()).apply();
@@ -305,15 +305,19 @@ public class MainActivity extends Activity {
     }
     private void candidateDialog(Candidate existing) {
         LinearLayout box=new LinearLayout(this);box.setPadding(dp(16),dp(8),dp(16),0);box.setOrientation(LinearLayout.VERTICAL);
-        EditText ticker=field("Тикер, например SBER"); EditText entry=numericField("Цена входа (₽)");
-        EditText stop=numericField("Стоп-цена (₽, необязательно)"); EditText target=numericField("Цель / цена выхода (₽, необязательно)");
-        box.addView(ticker);box.addView(entry);box.addView(stop);box.addView(target);
-        if(existing!=null){ticker.setText(existing.ticker);ticker.setEnabled(false);entry.setText(existing.entry==0?"":String.valueOf(existing.entry));stop.setText(existing.stop==0?"":String.valueOf(existing.stop));target.setText(existing.target==0?"":String.valueOf(existing.target));}
+        EditText ticker=field("Тикер, например SBER"); EditText entry=numericField("Цена входа (₽, можно оставить пустой)");
+        EditText stop=numericField("Стоп-цена (₽, можно рассчитать автоматически)"); EditText target=numericField("Цель (₽, можно рассчитать автоматически)");
+        Spinner period=new Spinner(this);String[] periods={"Краткосрочный","Среднесрочный","Долгосрочный"};
+        period.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,periods));
+        box.addView(ticker);box.addView(new TextView(this){{setText("Период оценки");}});box.addView(period);box.addView(entry);box.addView(stop);box.addView(target);
+        if(existing!=null){ticker.setText(existing.ticker);ticker.setEnabled(false);entry.setText(existing.entry==0?"":String.valueOf(existing.entry));stop.setText(existing.stop==0?"":String.valueOf(existing.stop));target.setText(existing.target==0?"":String.valueOf(existing.target));for(int i=0;i<periods.length;i++)if(periods[i].equals(existing.period))period.setSelection(i);}
         new AlertDialog.Builder(this).setTitle(existing==null?"Новый кандидат":"Изменить план входа").setView(box)
           .setPositiveButton("Сохранить",(d,w)->{
             String t=ticker.getText().toString().trim().toUpperCase(Locale.ROOT);
-            if(t.isEmpty()||val(entry)<=0){Toast.makeText(this,"Укажите тикер и цену входа",Toast.LENGTH_LONG).show();return;}
-            Candidate c=new Candidate(t,val(entry),val(stop),val(target));
+            double e=val(entry);if(e<=0)e=current(t);
+            if(t.isEmpty()||Double.isNaN(e)||e<=0){Toast.makeText(this,"Укажите тикер и доступную цену входа",Toast.LENGTH_LONG).show();return;}
+            Candidate c=new Candidate(t,e,val(stop),val(target),period.getSelectedItem().toString());
+            if(c.stop<=0)c.stop=e*0.92;if(c.target<=0)c.target=e*1.16;
             if(existing!=null)candidates.remove(existing);candidates.add(c);savePlans();renderPlans();
           }).setNegativeButton("Отмена",null).show();
     }
@@ -328,7 +332,9 @@ public class MainActivity extends Activity {
           .setPositiveButton("Сохранить",(d,w)->{
             String t=ticker.getText().toString().trim().toUpperCase(Locale.ROOT);
             if(t.isEmpty()||val(qty)<=0||val(buy)<=0){Toast.makeText(this,"Укажите тикер, количество и цену покупки",Toast.LENGTH_LONG).show();return;}
-            Holding h=new Holding(t,val(qty),val(buy),val(stop),val(target));
+            double b=val(buy),sl=val(stop),tp=val(target);
+            if(sl<=0)sl=b*0.92;if(tp<=0)tp=b*1.16;
+            Holding h=new Holding(t,val(qty),b,sl,tp);
             if(existing!=null)holdings.remove(existing);holdings.add(h);savePlans();renderPlans();
           }).setNegativeButton("Отмена",null).show();
     }
@@ -342,8 +348,10 @@ public class MainActivity extends Activity {
             if(c.target>0&&!Double.isNaN(p)&&p>=c.target)signal="Цель достигнута";
             LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(10),dp(6),dp(10),dp(6));card.setBackgroundColor(0xffffffff);watchList.addView(card);
             card.addView(text(c.ticker+" • текущая цена: "+(Double.isNaN(p)?"—":number(p)),16,true));
-            card.addView(text("Вход: "+number(c.entry)+" ₽ • Стоп: "+(c.stop>0?number(c.stop):"—")+" • Цель: "+(c.target>0?number(c.target):"—"),13,false));
-            card.addView(text("Сигнал: "+signal,14,true));
+            card.addView(text("Период: "+c.period+" • Оценка: "+c.score+"/6",13,false));
+            card.addView(text("Вход: "+number(c.entry)+" ₽ • Стоп: "+number(c.stop)+" ₽ • Цель: "+number(c.target)+" ₽",13,false));
+            card.addView(text("Рекомендация: "+c.recommendation+" • Сигнал цены: "+signal,14,true));
+            Button evaluate=new Button(this);evaluate.setText("Оценить по выбранному периоду");card.addView(evaluate);evaluate.setOnClickListener(v->analyzeCandidate(c));
             LinearLayout buttons=new LinearLayout(this);Button edit=new Button(this);edit.setText("Изменить");Button del=new Button(this);del.setText("Удалить");buttons.addView(edit);buttons.addView(del);card.addView(buttons);
             edit.setOnClickListener(v->candidateDialog(c));del.setOnClickListener(v->{candidates.remove(c);savePlans();renderPlans();});
         }
@@ -361,7 +369,9 @@ public class MainActivity extends Activity {
             card.addView(text(h.ticker+" • "+h.quantity+" шт.",16,true));
             card.addView(text("Покупка: "+number(h.buy)+" ₽ • Сейчас: "+currentText,13,false));
             card.addView(text("Стоимость покупки: "+number(cost)+" ₽ • Результат: "+pnl,13,false));
-            card.addView(text("Выход: стоп "+(h.stop>0?number(h.stop):"—")+" ₽ / цель "+(h.target>0?number(h.target):"—")+" ₽",13,false));
+            if(h.stop<=0)h.stop=h.buy*0.92;if(h.target<=0)h.target=h.buy*1.16;
+            card.addView(text("Стоп-цена: "+number(h.stop)+" ₽ • Цель: "+number(h.target)+" ₽",13,true));
+            card.addView(text("Уровни по умолчанию: −8% риск / +16% цель от цены покупки. Уточните их техническим анализом.",11,false));
             card.addView(text("Контроль: "+signal,14,true));
             LinearLayout buttons=new LinearLayout(this);Button edit=new Button(this);edit.setText("Изменить");Button del=new Button(this);del.setText("Удалить");buttons.addView(edit);buttons.addView(del);card.addView(buttons);
             edit.setOnClickListener(v->holdingDialog(h));del.setOnClickListener(v->{holdings.remove(h);savePlans();renderPlans();});
@@ -386,8 +396,7 @@ public class MainActivity extends Activity {
                     ByteArrayOutputStream out=new ByteArrayOutputStream();
                     try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);}
                     data=new JSONObject(new String(out.toByteArray(),StandardCharsets.UTF_8));break;
-                } catch(Exception e){last=e;} finally {if(c!=null)c.disconnect();}
-            }
+                } catch(Exception e){last=e;} finally {if(c!=null)c.disconnect();}            }
             if(data==null) {
                 if(page==0)throw new IOException("Не удалось получить свечи интервала "+interval+": "+(last==null?"нет ответа":last.getMessage()));
                 break;
@@ -426,6 +435,32 @@ public class MainActivity extends Activity {
             } catch(Exception e){runOnUiThread(()->{status.setText("Не удалось получить историю "+stock.ticker);new AlertDialog.Builder(this).setTitle("Анализ недоступен").setMessage(e.getMessage()+"\nПроверьте доступ к MOEX и повторите попытку.").setPositiveButton("OK",null).show();});}
         });
     }
+    private void analyzeCandidate(Candidate c) {
+        Stock stock=null;for(Stock x:stocks)if(x.ticker.equalsIgnoreCase(c.ticker)){stock=x;break;}
+        if(stock==null){new AlertDialog.Builder(this).setMessage("Нет актуальной котировки "+c.ticker+". Обновите котировки MOEX.").setPositiveButton("OK",null).show();return;}
+        final Stock selected=stock;status.setText("Оцениваю "+c.ticker+" по периоду: "+c.period+"…");
+        io.execute(()->{
+            try{
+                int interval=c.period.startsWith("Кратко")?10:(c.period.startsWith("Средне")?60:24);
+                int days=c.period.startsWith("Кратко")?30:(c.period.startsWith("Средне")?120:420);
+                ArrayList<Candle>a=fetchCandles(selected,interval,days);
+                if(a.size()<55)throw new IOException("Недостаточно истории для выбранного периода: "+a.size()+" свечей.");
+                int n=a.size();double p=a.get(n-1).close,s20=sma(a,n,20),s50=sma(a,n,50),r=rsi(a,14);
+                double atr=0;for(int i=n-14;i<n;i++){Candle x=a.get(i),pr=a.get(i-1);atr+=Math.max(x.high-x.low,Math.max(Math.abs(x.high-pr.close),Math.abs(x.low-pr.close)));}atr/=14;
+                int score=timeframePoints(a);
+                if(c.period.startsWith("Долго")){score=0;if(p>s20)score+=2;if(s20>s50)score+=2;if(n>=200&&p>sma(a,n,200))score+=2;if(r>75)score-=2;if(r<50)score--;}
+                String rec=score>=4?"ПОКУПАТЬ ПОСЛЕ ПОДТВЕРЖДЕНИЯ":score>=1?"ЖДАТЬ ОТКАТА / ПОДТВЕРЖДЕНИЯ":"НЕ ПОКУПАТЬ — СЛАБЫЙ ТРЕНД";
+                double entry=p,stop=Math.max(0,p-1.5*atr),target=p+3.0*atr;
+                c.entry=entry;c.stop=stop;c.target=target;c.score=score;c.recommendation=rec;savePlans();
+                String report="Период: "+c.period+"\\nСвечей: "+n+"; данные: "+a.get(0).date+" — "+a.get(n-1).date+
+                    "\\nТекущая цена: "+fmt(p)+" ₽\\nSMA20: "+fmt(s20)+" ₽; SMA50: "+fmt(s50)+" ₽; RSI14: "+fmt(r)+
+                    "\\nОценка тренда: "+score+"/6\\nРекомендация: "+rec+"\\n\\nПлан: вход около "+fmt(entry)+" ₽; стоп "+fmt(stop)+" ₽; цель "+fmt(target)+" ₽."+
+                    "\\nРиск/потенциал ориентировочно 1:2. Уровни рассчитаны по ATR выбранного интервала; не являются гарантией результата.";
+                runOnUiThread(()->{renderPlans();status.setText("Оценка кандидата "+c.ticker+" завершена.");new AlertDialog.Builder(this).setTitle("Рекомендация: "+c.ticker).setMessage(report).setPositiveButton("Понятно",null).show();});
+            }catch(Exception e){runOnUiThread(()->{status.setText("Не удалось оценить "+c.ticker);new AlertDialog.Builder(this).setTitle("Анализ недоступен").setMessage(e.getMessage()).setPositiveButton("OK",null).show();});}
+        });
+    }
+
     private String buildTimeframeSummary(ArrayList<Candle> a,String label) {
         if(a==null||a.size()<20)return "Недостаточно истории для расчёта (нужно минимум 20 свечей, получено "+(a==null?0:a.size())+").";
         int n=a.size();double p=a.get(n-1).close,s20=sma(a,n,20),change5=(p/a.get(Math.max(0,n-6)).close-1)*100.0;
@@ -543,8 +578,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 12', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.8.0"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 13', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.9.0"', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
     gradle.write_text(g, encoding="utf-8")
 worker = java.parent / "PriceMonitorWorker.java"
@@ -618,28 +653,3 @@ public class PriceMonitorWorker extends Worker {
         JSONObject md=data.getJSONObject("marketdata"); JSONArray cols=md.getJSONArray("columns"), rows=md.getJSONArray("data");
         int ti=-1,pi=-1;
         for(int i=0;i<cols.length();i++){if("SECID".equals(cols.optString(i)))ti=i;if("LAST".equals(cols.optString(i)))pi=i;}
-        if(ti<0||pi<0)return out;
-        for(int i=0;i<rows.length();i++){JSONArray r=rows.getJSONArray(i);Object v=r.opt(pi);if(v!=null&&v!=JSONObject.NULL)try{out.put(r.optString(ti),Double.parseDouble(v.toString()));}catch(Exception ignored){}}
-        return out;
-    }
-
-    private void alert(android.content.SharedPreferences p,String ticker,String rule,boolean active,String message) {
-        String key="alert_"+ticker+"_"+rule; boolean was=p.getBoolean(key,false);
-        if(!active){if(was)p.edit().putBoolean(key,false).apply();return;}
-        if(was)return;
-        Context c=getApplicationContext();
-        if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(c,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return;
-        p.edit().putBoolean(key,true).apply();
-        NotificationManager nm=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
-        if(Build.VERSION.SDK_INT>=26)nm.createNotificationChannel(new NotificationChannel("prosperity_alerts","Сигналы Процветания",NotificationManager.IMPORTANCE_HIGH));
-        NotificationCompat.Builder b=new NotificationCompat.Builder(c,"prosperity_alerts")
-            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Процветание — ценовой сигнал")
-            .setContentText(message).setStyle(new NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true);
-        nm.notify((ticker+"_"+rule).hashCode(),b.build());
-    }
-    private String fmt(double v){return String.format(Locale.US,"%.2f",v);}
-}
-''', encoding="utf-8")
-
-print("Patched standalone Prosperity Android app")
