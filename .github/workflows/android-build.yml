@@ -86,8 +86,51 @@ jobs:
           APP_DIR="$(dirname "$(find source -type f -path '*/app/build.gradle' -print -quit)")"
           python3 .github/scripts/patch_prosperity.py "$APP_DIR"
 
+      - name: Configure persistent release signing when a keystore is supplied
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            echo "No persistent signing key configured; debug APK only." | tee signing-status.txt
+            exit 0
+          fi
+          if [[ -z "${ANDROID_KEYSTORE_PASSWORD}" || -z "${ANDROID_KEY_ALIAS}" || -z "${ANDROID_KEY_PASSWORD}" ]]; then
+            echo "Keystore secrets are incomplete. Configure all four ANDROID_* secrets." >&2
+            exit 1
+          fi
+          APP_GRADLE="$(find source -type f -path '*/app/build.gradle' -print -quit)"
+          APP_DIR="$(dirname "$APP_GRADLE")"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$APP_DIR/prosperity-upload.jks"
+          test -s "$APP_DIR/prosperity-upload.jks"
+          cat >> "$APP_GRADLE" <<'GRADLE'
+
+android {
+    signingConfigs {
+        release {
+            storeFile file("prosperity-upload.jks")
+            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("ANDROID_KEY_ALIAS")
+            keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+        }
+    }
+    buildTypes {
+        release { signingConfig signingConfigs.release }
+    }
+}
+GRADLE
+          echo "Persistent release signing configured." | tee signing-status.txt
       - name: Build debug APK when a Gradle project is present
         shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           WRAPPER="$(find source -type f -name gradlew -print -quit)"
@@ -98,10 +141,16 @@ jobs:
             chmod +x "$WRAPPER"
             cd "$PROJECT_DIR"
             ./gradlew --no-daemon assembleDebug
+            if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
+              ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}" ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS}" ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD}" ./gradlew --no-daemon assembleRelease
+            fi
           elif [[ -n "$SETTINGS" || -n "$BUILD_FILE" ]]; then
             if [[ -n "$SETTINGS" ]]; then PROJECT_DIR="$(dirname "$SETTINGS")"; else PROJECT_DIR="$(dirname "$BUILD_FILE")"; fi
             cd "$PROJECT_DIR"
             gradle --no-daemon assembleDebug
+            if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
+              ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}" ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS}" ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD}" gradle --no-daemon assembleRelease
+            fi
           else
             echo "No Gradle project was found in the uploaded source archive." | tee ../build-status.txt
             exit 1
@@ -117,6 +166,7 @@ jobs:
           # Keep the Android app sources in the diagnostic artifact for safe native refactoring.
           if [[ -d source/android/app/src/main ]]; then cp -a source/android/app/src/main output/android-main; fi
           cp source/android/app/build.gradle output/app-build.gradle 2>/dev/null || true
+          cp signing-status.txt output/ 2>/dev/null || true
           if find output -type f -name '*.apk' | grep -q .; then
             echo 'APK build output found.' > output/BUILD-STATUS.txt
           else
