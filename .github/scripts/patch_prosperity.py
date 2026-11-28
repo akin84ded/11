@@ -653,6 +653,7 @@ manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/r
         android:allowBackup="false"
         android:label="@string/app_name"
         android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
@@ -666,6 +667,21 @@ manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/r
     </application>
 </manifest>
 ''', encoding="utf-8")
+# Trust user-installed CAs only for the MOEX ISS host. Android apps targeting
+# API 24+ do not trust user-added certificates by default, unlike Chrome.
+network_xml = main / "res/xml/network_security_config.xml"
+network_xml.parent.mkdir(parents=True, exist_ok=True)
+network_xml.write_text("""<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">iss.moex.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
+""", encoding="utf-8")
 strings.parent.mkdir(parents=True, exist_ok=True)
 strings.write_text("""<resources>
     <string name="app_name">Процветание</string>
@@ -674,8 +690,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 17', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.12.1"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 18', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.12.2"', g)
     # Use assignment syntax for Android DSL properties (Gradle 10 compatibility).
     g = re.sub(r'(?m)^(\s*)(namespace|compileSdk|minSdk|targetSdk)\s+([^\n]+)$', r'\1\2 = \3', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
