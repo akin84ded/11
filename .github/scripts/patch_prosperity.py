@@ -279,6 +279,7 @@ public class MainActivity extends Activity {
             Button edit=new Button(this); edit.setText(note.isEmpty()?"Добавить заметку":"Изменить заметку");
             card.addView(edit); edit.setOnClickListener(v->editNote(s,nt,edit));
             Button analysis=new Button(this); analysis.setText("Полный анализ и рекомендация"); card.addView(analysis); analysis.setOnClickListener(v->analyzeStock(s));
+            Button fundamental=new Button(this); fundamental.setText("Фундаментальный профиль MOEX"); card.addView(fundamental); fundamental.setOnClickListener(v->fundamentalAnalysis(s));
             shown++; if(shown>=150)break;
         }
         if(shown==0) list.addView(text(stocks.isEmpty()?"Список пока пуст. Нажмите «Обновить котировки» при наличии интернета.":"Ничего не найдено. Проверьте тикер или название.",15,false));
@@ -446,6 +447,94 @@ public class MainActivity extends Activity {
         }
         return result;
     }
+
+    private void fundamentalAnalysis(Stock stock) {
+        status.setText("Загружаю профиль эмитента "+stock.ticker+" из MOEX ISS…");
+        io.execute(() -> {
+            HttpURLConnection c=null;
+            try {
+                String path="/iss/securities/"+URLEncoder.encode(stock.ticker,"UTF-8")+".json?iss.meta=off&iss.only=description,boards";
+                c=(HttpURLConnection)new URL("https://iss.moex.com"+path).openConnection();
+                c.setConnectTimeout(12000); c.setReadTimeout(18000);
+                c.setRequestProperty("User-Agent","MOS-Prosperity-Android/3.13");
+                c.setRequestProperty("Accept","application/json");
+                int code=c.getResponseCode();
+                if(code!=200)throw new IOException("MOEX ISS HTTP "+code);
+                ByteArrayOutputStream out=new ByteArrayOutputStream();
+                try(InputStream in=c.getInputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);}
+                JSONObject data=new JSONObject(new String(out.toByteArray(),StandardCharsets.UTF_8));
+                JSONObject block=data.optJSONObject("description");
+                if(block==null)throw new IOException("MOEX не вернула описание эмитента");
+                JSONArray cols=block.optJSONArray("columns"), rows=block.optJSONArray("data");
+                if(cols==null||rows==null)throw new IOException("В ответе MOEX нет таблицы description");
+                int ni=column(cols,"name"), ti=column(cols,"title"), vi=column(cols,"value");
+                if(ni<0||vi<0)throw new IOException("Неизвестный формат описания MOEX");
+                LinkedHashMap<String,String> values=new LinkedHashMap<>();
+                LinkedHashMap<String,String> titles=new LinkedHashMap<>();
+                for(int i=0;i<rows.length();i++){
+                    JSONArray row=rows.optJSONArray(i);if(row==null)continue;
+                    String key=row.optString(ni,"");
+                    if(key.isEmpty())continue;
+                    Object value=row.opt(vi);
+                    if(value==null||value==JSONObject.NULL)continue;
+                    String val=value.toString().trim();
+                    if(val.isEmpty()||"null".equalsIgnoreCase(val))continue;
+                    values.put(key,val);
+                    titles.put(key,ti>=0?row.optString(ti,key):key);
+                }
+                StringBuilder report=new StringBuilder();
+                report.append("ФУНДАМЕНТАЛЬНЫЙ ПРОФИЛЬ • MOEX\n\n");
+                report.append(stock.ticker).append(" — ").append(stock.name).append("\n");
+                report.append("Рыночная цена: ").append(stock.price).append(" ₽\n\n");
+                String[] keys={"SECNAME","SHORTNAME","LATNAME","ISIN","REGNUMBER","ISSUEDATE","SECTYPE","GROUP","TYPE","LISTLEVEL","CURRENCYID","FACEVALUE","FACEUNIT","LOTSIZE","ISSUESIZE","MATDATE"};
+                for(String key:keys){
+                    String value=values.get(key);
+                    if(value!=null)report.append(titles.get(key)).append(": ").append(value).append("\n");
+                }
+                double shares=parseFundamentalNumber(values.get("ISSUESIZE"));
+                double price=parseFundamentalNumber(stock.price);
+                if(shares>0&&price>0){
+                    double cap=shares*price;
+                    report.append("\nОЦЕНКА РАЗМЕРА КОМПАНИИ\n");
+                    report.append("Ориентировочная капитализация по числу выпущенных акций: ").append(fmtLarge(cap)).append(" ₽\n");
+                    report.append("Расчёт: последняя цена × количество выпущенных акций. Это оценка, а не официальная капитализация MOEX; она может отличаться от free-float капитализации.\n");
+                } else {
+                    report.append("\nКапитализацию автоматически рассчитать нельзя: MOEX не предоставила количество выпущенных акций.\n");
+                }
+                report.append("\nФИНАНСОВЫЕ ПОКАЗАТЕЛИ\n");
+                report.append("P/E, P/B, EV/EBITDA, ROE, долговая нагрузка, выручка и чистая прибыль пока не включены: открытый базовый ISS не предоставляет полный комплект финансовой отчётности эмитентов.\n");
+                report.append("Дивиденды и дивидендная доходность также не подменяются предположениями. Добавим их после подключения проверяемого источника корпоративной отчётности и раскрытия.\n\n");
+                report.append("ИСТОЧНИК И ОГРАНИЧЕНИЯ\n");
+                report.append("MOEX ISS • описание инструмента. Биржевые сведения не являются аудированной финансовой отчётностью. Данные могут быть неполными или обновляться с задержкой. Это справочный профиль, не индивидуальная инвестиционная рекомендация.");
+                String result=report.toString();
+                prefs.edit().putString("fundamental_"+stock.ticker,data.toString()).putLong("fundamental_updated_"+stock.ticker,System.currentTimeMillis()).apply();
+                runOnUiThread(()->{
+                    status.setText("Профиль "+stock.ticker+" загружен из MOEX ISS.");
+                    TextView body=text(result,14,false);body.setPadding(dp(18),dp(12),dp(18),dp(12));
+                    ScrollView scroll=new ScrollView(this);scroll.addView(body);
+                    new AlertDialog.Builder(this).setTitle("Фундаментальный профиль: "+stock.ticker).setView(scroll).setPositiveButton("Закрыть",null).show();
+                });
+            } catch(Exception e){
+                runOnUiThread(()->{
+                    status.setText("Не удалось загрузить профиль "+stock.ticker+" из MOEX ISS.");
+                    new AlertDialog.Builder(this).setTitle("Фундаментальный профиль недоступен")
+                      .setMessage(e.getMessage()+"\nПроверьте интернет и повторите попытку. Котировки и сохранённые данные не затрагиваются.")
+                      .setPositiveButton("OK",null).show();
+                });
+            } finally {if(c!=null)c.disconnect();}
+        });
+    }
+    private double parseFundamentalNumber(String value) {
+        if(value==null)return 0;
+        try{return Double.parseDouble(value.trim().replace(" ","").replace(',','.'));}catch(Exception e){return 0;}
+    }
+    private String fmtLarge(double value) {
+        if(value>=1.0e12)return String.format(Locale.US,"%.2f трлн",value/1.0e12);
+        if(value>=1.0e9)return String.format(Locale.US,"%.2f млрд",value/1.0e9);
+        if(value>=1.0e6)return String.format(Locale.US,"%.2f млн",value/1.0e6);
+        return String.format(Locale.US,"%.2f",value);
+    }
+
     private void analyzeStock(Stock stock) {
         status.setText("Загружаю дневную, часовую и 10-минутную историю "+stock.ticker+"…");
         io.execute(() -> {
@@ -690,8 +779,8 @@ strings.write_text("""<resources>
 if gradle.exists():
     g = gradle.read_text(encoding="utf-8")
     import re
-    g = re.sub(r'versionCode\s+\d+', 'versionCode 18', g)
-    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.12.2"', g)
+    g = re.sub(r'versionCode\s+\d+', 'versionCode 19', g)
+    g = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.13.0"', g)
     # Use assignment syntax for Android DSL properties (Gradle 10 compatibility).
     g = re.sub(r'(?m)^(\s*)(namespace|compileSdk|minSdk|targetSdk)\s+([^\n]+)$', r'\1\2 = \3', g)
     g = g.replace('applicationId "ru.mos2.app"', 'applicationId "ru.mos2.prosperity"')
